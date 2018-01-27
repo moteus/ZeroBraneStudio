@@ -863,21 +863,33 @@ function CreateEditor(bare)
     function (event)
       local line = editor:LineFromPosition(event:GetPosition())
       local marginno = event:GetMargin()
+      local ctrl   = wx.wxGetKeyState(wx.WXK_CONTROL)
+      local alt    = wx.wxGetKeyState(wx.WXK_ALT)
+      local shift  = wx.wxGetKeyState(wx.WXK_SHIFT)
       if marginno == margin.MARKER then
-        editor:BreakpointToggle(line)
+        --! @moteus@
+        if ctrl and not (alt or shift) then
+          editor:BookmarkToggle(line)
+        end
+        if not (ctrl or alt or shift) then
+          editor:BreakpointToggle(line)
+        end
       elseif marginno == margin.FOLD then
         local header = bit.band(editor:GetFoldLevel(line),
           wxstc.wxSTC_FOLDLEVELHEADERFLAG) == wxstc.wxSTC_FOLDLEVELHEADERFLAG
-        local shift, ctrl = wx.wxGetKeyState(wx.WXK_SHIFT), wx.wxGetKeyState(wx.WXK_CONTROL)
-        if shift and ctrl then
+        --! @moteus@
+        -- if shift and ctrl then
+        if shift and ctrl and not alt then
+          editor:FoldSome()
+        elseif ctrl and not (alt or shift) then
           editor:FoldSome(line)
-        elseif ctrl then -- select the scope that was clicked on
+        elseif shift and not (alt or ctrl) then -- select the scope that was clicked on
           local from = header and line or editor:GetFoldParent(line)
           if from > -1 then -- only select if there is a block to select
             local to = editor:GetLastChild(from, -1)
             editor:SetSelection(editor:PositionFromLine(from), editor:PositionFromLine(to+1))
           end
-        elseif header or shift then
+        elseif header or (ctrl and not (alt or shift)) then
           editor:ToggleFold(line)
         end
       end
@@ -1750,6 +1762,7 @@ function SetupKeywords(editor, ext, forcespec, styles, font, fontitalic)
   -- the folds are not shown (wxwidgets 2.9.5)
   editor:SetProperty("fold", edcfg.fold and "1" or "0")
   if edcfg.fold then
+    editor:SetProperty("fold.html", "1")
     editor:SetProperty("fold.compact", edcfg.foldcompact and "1" or "0")
     editor:SetProperty("fold.comment", "1")
     editor:SetProperty("fold.line.comments", "1")
