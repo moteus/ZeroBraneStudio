@@ -34,6 +34,24 @@ ok(limit(maxstat, function() CreateAutoCompList(editor, "line.") end),
 
 editor:SetText('') -- use Set/Add to position cursor after added text
 editor:AddText([[
+  local d = f:getSome()
+  local f = d:getMore()
+  f:]])
+
+ok(limit(maxstat, function() CreateAutoCompList(editor, "f:") end),
+  ("Auto-complete (strategy=%s) doesn't loop for recursive definitions (1/2)."):format(s))
+
+editor:SetText('') -- use Set/Add to position cursor after added text
+editor:AddText([[
+  local d = f:getSome()
+  local f = d[0]
+  f:]])
+
+ok(limit(maxstat, function() CreateAutoCompList(editor, "f:") end),
+  ("Auto-complete (strategy=%s) doesn't loop for recursive definitions (2/2)."):format(s))
+
+editor:SetText('') -- use Set/Add to position cursor after added text
+editor:AddText([[
   local foo = io
   foo:]])
 
@@ -225,16 +243,19 @@ IndicateAll(editor)
 
 local status, res = pcall(CreateAutoCompList, editor, "va")
 ok(status and (res or ""):match('velAcc'),
-  ("Auto-complete (symbols=%s) offers case-insensitive completions for mixed case match."):format(s))
+  ("Auto-complete (symbols=%s) offers case-insensitive completions for mixed case match.")
+    :format(ide.config.acandtip.symbols))
 ok(status and (res or ""):match('value'),
-  ("Auto-complete (symbols=%s) offers case-insensitive completions for lower case match."):format(s))
+  ("Auto-complete (symbols=%s) offers case-insensitive completions for lower case match.")
+    :format(ide.config.acandtip.symbols))
 
 local status, res = pcall(CreateAutoCompList, editor, "vA")
-ide:Print("velAcc/vA", status, res)
-  ok(status and (res or ""):match('velAcc'),
-    ("Auto-complete (symbols=%s) offers case-sensitive completions for upper case match (1/2)."):format(s))
-  ok(status and res and not res:match('value'),
-    ("Auto-complete (symbols=%s) offers case-sensitive completions for upper case match (2/2)."):format(s))
+ok(status and (res or ""):match('velAcc'),
+  ("Auto-complete (symbols=%s) offers case-sensitive completions for upper case match (1/2).")
+    :format(ide.config.acandtip.symbols))
+ok(status and res and not res:match('value'),
+  ("Auto-complete (symbols=%s) offers case-sensitive completions for upper case match (2/2).")
+    :format(ide.config.acandtip.symbols))
 
 -- cleanup
 ide.config.acandtip.strategy = strategy

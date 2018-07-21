@@ -1,4 +1,4 @@
--- Copyright 2011-16 Paul Kulchenko, ZeroBrane LLC
+-- Copyright 2011-18 Paul Kulchenko, ZeroBrane LLC
 ---------------------------------------------------------
 
 local ide = ide
@@ -205,7 +205,9 @@ local function showCommandBar(params)
 
   local linewas -- line that was reported when updated
   local function onTextUpdated()
-    pending = ide:GetApp():GetMainLoop():IsYielding()
+    if ide:IsValidProperty(ide:GetApp(), "GetMainLoop") then
+      pending = ide:GetApp():GetMainLoop():IsYielding()
+    end
     if pending then return end
 
     local text = search:GetValue()
@@ -228,7 +230,8 @@ local function showCommandBar(params)
   end
 
   local function onKeyDown(event)
-    if ide:GetApp():GetMainLoop():IsYielding() then
+    if ide:IsValidProperty(ide:GetApp(), "GetMainLoop")
+    and ide:GetApp():GetMainLoop():IsYielding() then
       event:Skip()
       return
     end
@@ -503,7 +506,7 @@ function ShowCommandBar(default, selected)
             if isfunc then -- show the tooltip
               ide:GetMainFrame():SetFocus()
               ide.frame:AddPendingEvent(wx.wxCommandEvent(
-                wx.wxEVT_COMMAND_MENU_SELECTED, ID_SHOWTOOLTIP))
+                wx.wxEVT_COMMAND_MENU_SELECTED, ID.SHOWTOOLTIP))
             end
           end
         -- set line position in the (current) editor if requested

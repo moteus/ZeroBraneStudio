@@ -42,7 +42,7 @@ console:MarkerDefine(StylesGetMarker("output"))
 console:MarkerDefine(StylesGetMarker("message"))
 console:SetReadOnly(false)
 
-SetupKeywords(console,"lua",nil,ide.config.stylesoutshell)
+console:SetupKeywords("lua",nil,ide.config.stylesoutshell)
 
 local function getPromptLine()
   local totalLines = console:GetLineCount()
@@ -285,7 +285,7 @@ local function createenv()
 
   local os = {
     exit = function()
-      ide.frame:AddPendingEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, ID_EXIT))
+      ide.frame:AddPendingEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, ID.EXIT))
     end,
   }
   env.os = setmetatable(os, {__index = _G.os})

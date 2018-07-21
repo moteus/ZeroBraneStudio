@@ -88,7 +88,7 @@ ide = {
   },
 
   -- misc
-  exitingProgram = false, -- are we currently exiting, ID_EXIT
+  exitingProgram = false, -- are we currently exiting?
   infocus = nil, -- last component with a focus
   editorApp = wx.wxGetApp(),
   editorFilename = nil,
@@ -477,11 +477,18 @@ do
   local includes = {}
   local include = function(c)
     if c then
-      for _, config in ipairs({ide.configqueue[#ide.configqueue], ide.configs.user, ide.configs.system}) do
-        local p = config and MergeFullPath(config.."/../", c)
-        includes[p] = (includes[p] or 0) + 1
-        if includes[p] > 1 or LoadLuaConfig(p) or LoadLuaConfig(p..".lua") then return end
-        includes[p] = includes[p] - 1
+      for _, config in ipairs({
+          -- `or ""` is needed to make sure that the loop is not stopped on `nil`
+          ide.configqueue[#ide.configqueue] or "",
+          (wx.wxFileName.SplitPath(ide.configs.user or "")),
+          (wx.wxFileName.SplitPath(ide.configs.system or "")),
+      }) do
+        if config > "" then
+          local p = MergeFullPath(config, c)
+          includes[p] = (includes[p] or 0) + 1
+          if includes[p] > 1 or LoadLuaConfig(p) or LoadLuaConfig(p..".lua") then return end
+          includes[p] = includes[p] - 1
+        end
       end
       ide:Print(("Can't find configuration file '%s' to process."):format(c))
     end
@@ -581,7 +588,7 @@ ide:LoadTool()
 ide:LoadAPI()
 
 -- register the rest of the shortcuts to allow them to be overwritten from onRegister
-if ide.osname == 'Macintosh' then ide:SetAccelerator(ID_VIEWMINIMIZE, "Ctrl-M") end
+if ide.osname == 'Macintosh' then ide:SetAccelerator(ID.VIEWMINIMIZE, "Ctrl-M") end
 for _, sc in ipairs({ID.RESTART, ID.CLEAROUTPUT, ID.CLEARCONSOLE}) do
   if ide.config.keymap[sc] then ide:SetAccelerator(sc, ide.config.keymap[sc]) end
 end
@@ -609,7 +616,7 @@ SettingsRestoreView()
 
 do
   for _, filename in ipairs(ide.filenames) do
-    ide:ActivateFile(ide:MergePath(ide.cwd or "", filename))
+    ide:ActivateFile(ide.cwd and GetFullPathIfExists(ide.cwd, filename) or filename)
   end
   if ide:GetEditorNotebook():GetPageCount() == 0 then NewFile() end
 end
@@ -624,11 +631,11 @@ if app.postinit then app.postinit() end
 -- conflicting events when the current focus is on a proper object.
 -- non-conflicting shortcuts are handled through key-down events.
 local remap = {
-  [ID_ADDWATCH]    = ide:GetWatch(),
-  [ID_EDITWATCH]   = ide:GetWatch(),
-  [ID_DELETEWATCH] = ide:GetWatch(),
-  [ID_RENAMEFILE]  = ide:GetProjectTree(),
-  [ID_DELETEFILE]  = ide:GetProjectTree(),
+  [ID.ADDWATCH]    = ide:GetWatch(),
+  [ID.EDITWATCH]   = ide:GetWatch(),
+  [ID.DELETEWATCH] = ide:GetWatch(),
+  [ID.RENAMEFILE]  = ide:GetProjectTree(),
+  [ID.DELETEFILE]  = ide:GetProjectTree(),
 }
 
 local function rerouteMenuCommand(obj, id)
@@ -693,8 +700,8 @@ for lid in pairs(remap) do
 end
 
 -- these shortcuts need accelerators handling as they are not present anywhere in the menu
-for _, id in ipairs({ ID_GOTODEFINITION, ID_RENAMEALLINSTANCES,
-    ID_REPLACEALLSELECTIONS, ID_QUICKADDWATCH, ID_QUICKEVAL, ID_ADDTOSCRATCHPAD}) do
+for _, id in ipairs({ ID.GOTODEFINITION, ID.RENAMEALLINSTANCES,
+    ID.REPLACEALLSELECTIONS, ID.QUICKADDWATCH, ID.QUICKEVAL, ID.ADDTOSCRATCHPAD}) do
   local ksc = ide.config.keymap[id]
   if ksc and ksc > "" then
     local fakeid = NewID()
@@ -706,7 +713,7 @@ for _, id in ipairs({ ID_GOTODEFINITION, ID_RENAMEALLINSTANCES,
   end
 end
 
-for _, id in ipairs({ ID_NOTEBOOKTABNEXT, ID_NOTEBOOKTABPREV }) do
+for _, id in ipairs({ ID.NOTEBOOKTABNEXT, ID.NOTEBOOKTABPREV }) do
   local ksc = ide.config.keymap[id]
   if ksc and ksc > "" then
     local nbc = "wxAuiNotebook"
@@ -720,7 +727,7 @@ for _, id in ipairs({ ID_NOTEBOOKTABNEXT, ID_NOTEBOOKTABPREV }) do
         if not notebook then return end
 
         local first, last = 0, notebook:GetPageCount()-1
-        local fwd = event:GetId() == ID_NOTEBOOKTABNEXT
+        local fwd = event:GetId() == ID.NOTEBOOKTABNEXT
         if fwd and notebook:GetSelection() == last then
           notebook:SetSelection(first)
         elseif not fwd and notebook:GetSelection() == first then

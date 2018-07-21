@@ -62,7 +62,6 @@ else -- something different is running on our port
   cln:send(protocol.client.greeting)
 
   local msg = cln:receive()
-  local arg = ide.arg
   if msg and msg:match(protocol.server.greeting:gsub("%%s",".+$")) then
     local username = msg:match(protocol.server.greeting:gsub("%%s","(.+)$"))
     if username ~= wx.wxGetUserName() then
@@ -70,7 +69,8 @@ else -- something different is running on our port
     else
       local failed = false
       for _, filename in ipairs(ide.filenames) do
-        cln:send(protocol.client.requestloading:format(ide:MergePath(ide.cwd or "", filename)))
+        cln:send(protocol.client.requestloading
+          :format(ide.cwd and GetFullPathIfExists(ide.cwd, filename) or filename))
 
         local msg, err = cln:receive()
         if msg ~= protocol.server.answerok then

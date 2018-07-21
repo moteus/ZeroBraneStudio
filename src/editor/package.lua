@@ -202,6 +202,10 @@ function ide:GetMainFrame()
   if not self.frame then
     self.frame = wx.wxFrame(wx.NULL, wx.wxID_ANY, self:GetProperty("editor"),
       wx.wxDefaultPosition, wx.wxSize(1100, 700))
+      -- transparency range: 0 == invisible -> 255 == opaque
+      -- set lower bound of 50 to prevent accidental invisibility
+      local transparency = tonumber(self:GetConfig().transparency)
+      if transparency then self.frame:SetTransparent(math.max(50, transparency)) end
   end
   return self.frame
 end
@@ -439,7 +443,9 @@ function ide:ReportError(msg)
 end
 
 local rawMethods = {"AddTextDyn", "InsertTextDyn", "AppendTextDyn", "SetTextDyn",
-  "GetTextDyn", "GetLineDyn", "GetSelectedTextDyn", "GetTextRangeDyn"}
+  "GetTextDyn", "GetLineDyn", "GetSelectedTextDyn", "GetTextRangeDyn",
+  "ReplaceTargetDyn", -- this method is not available in wxlua 3.1, so it's simulated
+}
 local useraw = nil
 
 local invalidUTF8, invalidLength
@@ -454,6 +460,13 @@ function ide:CreateStyledTextCtrl(...)
     useraw = true
     for _, m in ipairs(rawMethods) do
       if not pcall(function() return editor[m:gsub("Dyn", "Raw")] end) then useraw = false; break end
+    end
+  end
+
+  if not editor.ReplaceTargetRaw then
+    editor.ReplaceTargetRaw = function(self, ...)
+      self:ReplaceTarget("")
+      self:InsertTextDyn(self:GetTargetStart(), ...)
     end
   end
 
@@ -667,6 +680,8 @@ function ide:CreateStyledTextCtrl(...)
   end
 
   function editor:GetModifiedTime() return self.updated end
+
+  function editor:SetupKeywords(...) return SetupKeywords(self, ...) end
 
   editor:Connect(wx.wxEVT_KEY_DOWN,
     function (event)
@@ -1161,7 +1176,7 @@ function ide:AddTool(name, command, updateui)
     if not helpMenu then helpindex = self:GetMenuBar():GetMenuCount() end
 
     toolMenu = self:MakeMenu {}
-    self:GetMenuBar():Insert(helpindex, toolMenu, "&Tools")
+    self:GetMenuBar():Insert(helpindex, toolMenu, TR("&Tools"))
   end
   local id = tool2id(name)
   toolMenu:Append(id, name)
@@ -1227,10 +1242,7 @@ function ide:GetAccelerator(id) return at[id] end
 function ide:GetAccelerators() return at end
 
 function ide:GetHotKey(idOrKsc)
-  if not idOrKsc then
-    self:Print("GetHotKey requires id or key shortcut.")
-    return
-  end
+  if not idOrKsc then return nil, "GetHotKey requires id or key shortcut." end
 
   local id, ksc = idOrKsc
   if type(idOrKsc) == type("") then id, ksc = ksc, id end

@@ -1,4 +1,4 @@
--- Copyright 2011-17 Paul Kulchenko, ZeroBrane LLC
+-- Copyright 2011-18 Paul Kulchenko, ZeroBrane LLC
 -- authors: Lomtik Software (J. Winwood & John Labenski)
 -- Luxinia Dev (Eike Decker & Christoph Kubisch)
 ---------------------------------------------------------
@@ -207,6 +207,12 @@ function findReplace:Find(reverse)
     if posFind == wx.wxNOT_FOUND then
       self.foundString = false
       msg = TR("Text not found.")
+      local parent = editor:GetParent()
+      if parent and parent:GetClassInfo():GetClassName() == 'wxAuiNotebook' then
+        local nb = parent:DynamicCast("wxAuiNotebook")
+        local index = nb:GetPageIndex(editor)
+        if index ~= wx.wxNOT_FOUND then msg = nb:GetPageText(index)..": "..msg end
+      end
     else
       self.foundString = true
       local start = editor:GetTargetStart()
@@ -503,7 +509,6 @@ function findReplace:RunInFiles(replace)
   ide:Yield() -- let the update of the UI happen
 
   -- save focus to restore after adding a page with search results
-  local ctrl = ide:GetMainFrame():FindFocus()
   local findText = self.findCtrl:GetValue()
   local flags = self:GetFlags()
   local showaseditor = ide.config.search.showaseditor
@@ -681,8 +686,8 @@ function findReplace:RunInFiles(replace)
   -- as the controls are likely to be in some invalid state anyway
   if not ide:IsValidCtrl(self.oveditor) then return end
 
-  self:SetStatus(not completed and TR("Cancelled by the user.")
-    or TR("Found %d instance.", self.occurrences):format(self.occurrences))
+  local msg = TR(replace and "Replaced %d instance." or "Found %d instance.", self.occurrences)
+  self:SetStatus(not completed and TR("Cancelled by the user.") or msg:format(self.occurrences))
   self.oveditor:Destroy()
   self.oveditor = nil
   self.toolbar:UpdateWindowUI(wx.wxUPDATE_UI_FROMIDLE)
@@ -699,7 +704,7 @@ local icons = {
       ID.SEPARATOR, ID.FINDOPTSTATUS,
     },
     infiles = {
-      ID.FIND, ID_SEPARATOR,
+      ID.FIND, ID.SEPARATOR,
       ID.FINDOPTCONTEXT, ID.FINDOPTMULTIRESULTS, ID.FINDOPTWORD,
       ID.FINDOPTCASE, ID.FINDOPTREGEX, ID.FINDOPTSUBDIR,
       ID.FINDOPTSCOPE, ID.FINDSETDIR,

@@ -42,6 +42,15 @@ function OutputAddStyles(styles)
     out:SetProperty("lexer.errorlist.escape.sequences","1")
 
     -- assign ansimap styles
+    -- if this styles table is the same as the default one, then make a copy
+    -- to avoid modifying all editor styles with "ansi" ones,
+    -- as they will conflict with lexer-specific styles
+    if ide.config.styles == styles then
+      local stylecopy = {}
+      for k,v in pairs(styles) do stylecopy[k] = v end
+      styles = stylecopy
+      ide.config.stylesoutshell = styles
+    end
     for k,v in pairs(ide.config.output.ansimap) do styles["ansi"..k] = v end
   end
 end
@@ -50,7 +59,7 @@ OutputAddStyles(ide.config.stylesoutshell)
 StylesApplyToEditor(ide.config.stylesoutshell,out)
 
 function ClearOutput(force)
-  if not (force or ide:GetMenuBar():IsChecked(ID_CLEAROUTPUTENABLE)) then return end
+  if not (force or ide:GetMenuBar():IsChecked(ID.CLEAROUTPUTENABLE)) then return end
   out:SetReadOnly(false)
   out:ClearAll()
   out:SetReadOnly(true)
@@ -415,29 +424,19 @@ local function activateByPartialName(fname, jumpline, jumplinepos)
   return true
 end
 
-local jumptopatterns = { -- ["pattern"] = true/false for multiple/single
-  --[string "<filename>"]:line:
-  ['.-%[string "([^"]+)"%]:(%d+)%s*:'] = false,
-  -- <filename>:line:linepos -- this is used in some analyzers, like LuaCheck
-  ["%s*(.-):(%d+):(%d+):"] = false,
-  -- <filename>:line:
-  ["%s*(.-):(%d+)%s*:"] = true,
-  -- error in __gc metamethod (<filename>:line:...
-  ["%((.-):(%d+)%s*:"] = false,
-}
-
 out:Connect(wxstc.wxEVT_STC_DOUBLECLICK,
   function(event)
     local line = out:GetCurrentLine()
     local linetx = out:GetLineDyn(line)
 
     -- try to detect a filename and line in linetx
-    for pattern, multiple in pairs(jumptopatterns) do
+    for pattern, multiple in pairs(ide.config.output.lineactivate or {}) do
       local results = {}
       for fname, jumpline, jumplinepos in linetx:gmatch(pattern) do
         -- insert matches in reverse order (if any)
         table.insert(results, 1, {fname, jumpline, jumplinepos})
-        if not multiple then break end -- one match is enough if no multiple is requested
+        if type(multiple) == "function" then results[1] = {multiple(unpack(results[1]))} end
+        if multiple ~= true then break end -- one match is enough if no multiple is requested
       end
       for _, result in ipairs(results) do
         if activateByPartialName(unpack(result)) then

@@ -79,6 +79,11 @@ for ARG in "$@"; do
     BUILD_53=true
     BUILD_FLAGS="$BUILD_FLAGS -DLUA_COMPAT_APIINTCASTS"
     ;;
+  5.4)
+    BUILD_LUA=true
+    BUILD_54=true
+    BUILD_FLAGS="$BUILD_FLAGS -DLUA_COMPAT_APIINTCASTS"
+    ;;
   jit)
     BUILD_LUA=true
     BUILD_JIT=true
@@ -177,6 +182,15 @@ if [ $BUILD_53 ]; then
   LUA_URL="http://www.lua.org/ftp/$LUA_FILENAME"
 fi
 
+if [ $BUILD_54 ]; then
+  LUAV="54"
+  LUAS=$LUAV
+  LUA_BASENAME="lua-5.4.0-work1"
+  LUA_FILENAME="$LUA_BASENAME.tar.gz"
+  LUA_URL="http://www.lua.org/work/$LUA_FILENAME"
+  LUA_COMPAT="MYCFLAGS=-DLUA_COMPAT_MODULE"
+fi
+
 if [ $BUILD_JIT ]; then
   LUA_BASENAME="luajit"
   LUA_URL="https://github.com/pkulchenko/luajit.git"
@@ -244,11 +258,11 @@ if [ $BUILD_WXWIDGETS ]; then
   [ $BUILD_LEXLPEG ] || git clone "$WXWIDGETS_URL" "$WXWIDGETS_BASENAME" || { echo "Error: failed to get wxWidgets"; exit 1; }
   cd "$WXWIDGETS_BASENAME"
 
-  # refresh wxwidgets submodules
-  git submodule update --init --recursive
-
   # checkout the version that was used in wxwidgets upgrade to 3.1.x
   git checkout WX_3_1_0-7d9d59
+
+  # refresh wxwidgets submodules
+  git submodule update --init --recursive
 
   ./configure --prefix="$INSTALL_DIR" $WXWIDGETSDEBUG --disable-shared --enable-unicode \
     --enable-compat28 \
@@ -352,9 +366,10 @@ if [ $BUILD_LUASEC ]; then
     src/luasocket/{timeout.c,buffer.c,io.c,usocket.c} src/{context.c,x509.c,ssl.c} -Isrc \
     -lssl -lcrypto \
     || { echo "Error: failed to build LuaSec"; exit 1; }
-  cp src/ssl.lua "$INSTALL_DIR/share/lua/$LUAV"
+  mkdir -p "$INSTALL_DIR/share/lua/$LUAV/"
+  cp src/ssl.lua "$INSTALL_DIR/share/lua/$LUAV/"
   mkdir -p "$INSTALL_DIR/share/lua/$LUAV/ssl"
-  cp src/https.lua "$INSTALL_DIR/share/lua/$LUAV/ssl"
+  cp src/https.lua "$INSTALL_DIR/share/lua/$LUAV/ssl/"
   [ -f "$INSTALL_DIR/lib/lua/$LUAV/ssl.so" ] || { echo "Error: ssl.so isn't found"; exit 1; }
   [ $DEBUGBUILD ] || strip --strip-unneeded "$INSTALL_DIR/lib/lua/$LUAV/ssl.so"
   cd ..
