@@ -439,8 +439,8 @@ local delayed = {}
 function IndicateIfNeeded()
   local editor = ide:GetEditor()
   -- do the current one first
-  if delayed[editor] then return IndicateAll(editor) end
-  for ed in pairs(delayed) do return IndicateAll(ed) end
+  if delayed[editor] then return editor:IndicateSymbols() end
+  for ed in pairs(delayed) do return ed:IndicateSymbols() end
 end
 
 -- find all instances of a symbol at pos
@@ -479,7 +479,7 @@ local function indicateFindInstances(editor, name, pos)
   return this and instances[#instances] or {}
 end
 
-function IndicateAll(editor, lines)
+local function indicateSymbols(editor, lines)
   if not ide.config.autoanalyzer then return end
 
   local d = delayed[editor]
@@ -647,6 +647,7 @@ function CreateEditor(bare)
   editor.ctrlcache = {}
   editor.tokenlist = {}
   editor.onidle = {}
+  editor.usedynamicwords = true
   -- populate cache with Ctrl-<letter> combinations for workaround on Linux
   -- http://wxwidgets.10942.n7.nabble.com/Menu-shortcuts-inconsistentcy-issue-td85065.html
   for id, shortcut in pairs(ide.config.keymap) do
@@ -785,8 +786,15 @@ function CreateEditor(bare)
 
   if ide:IsValidProperty(editor, "SetMultiPaste") then editor:SetMultiPaste(wxstc.wxSTC_MULTIPASTE_EACH) end
 
+  function editor:UseDynamicWords(val)
+    if val == nil then return self.usedynamicwords end
+    self.usedynamicwords = val
+  end
+
   function editor:GetTokenList() return self.tokenlist end
   function editor:ResetTokenList() self.tokenlist = {}; return self.tokenlist end
+
+  function editor:IndicateSymbols(...) return indicateSymbols(self, ...) end
 
   function editor:ValueFromPosition(pos) return getValAtPosition(self, pos) end
 
@@ -919,7 +927,7 @@ function CreateEditor(bare)
         elseif events > 0 and editor.ev[events][1] == firstLine then
           editor.ev[events][2] = math.max(editor.ev[events][2], linesChanged)
         end
-        DynamicWordsAdd(editor, nil, firstLine, linesChanged)
+        if editor.usedynamicwords then DynamicWordsAdd(editor, nil, firstLine, linesChanged) end
       end
 
       local beforeInserted = bit.band(evtype,wxstc.wxSTC_MOD_BEFOREINSERT) ~= 0
@@ -955,10 +963,10 @@ function CreateEditor(bare)
       if beforeDeleted then
         local text = editor:GetTextRangeDyn(pos, pos+event:GetLength())
         local _, numlines = text:gsub("\r?\n","%1")
-        DynamicWordsRem(editor,nil,firstLine, numlines)
+        if editor.usedynamicwords then DynamicWordsRem(editor,nil,firstLine, numlines) end
       end
       if beforeInserted then
-        DynamicWordsRem(editor,nil,firstLine, 0)
+        if editor.usedynamicwords then DynamicWordsRem(editor,nil,firstLine, 0) end
       end
     end)
 
@@ -1235,7 +1243,7 @@ function CreateEditor(bare)
         IndicateFunctionsOnly(editor,line,line+iv[2])
       end
       if minupdated then
-        local ok, res = pcall(IndicateAll, editor, minupdated)
+        local ok, res = pcall(indicateSymbols, editor, minupdated)
         if not ok then ide:Print("Internal error: ",res,minupdated) end
       end
       local firstvisible = editor:GetFirstVisibleLine()
@@ -1725,7 +1733,7 @@ end
 
 function SetupKeywords(editor, ext, forcespec, styles, font, fontitalic)
   local lexerstyleconvert = nil
-  local spec = forcespec or ide:FindSpec(ext)
+  local spec = forcespec or ide:FindSpec(ext, editor:GetLine(0))
   -- found a spec setup lexers and keywords
   if spec then
     if type(spec.lexer) == "string" then

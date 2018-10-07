@@ -861,7 +861,7 @@ function debugger:handle(command, server, options)
 
   -- some filenames may be represented in a different code page; check and re-encode as UTF8
   local codepage = ide:GetCodePage()
-  if codepage and file and FixUTF8(file) == nil and winapi then
+  if codepage and type(file) == "string" and FixUTF8(file) == nil and winapi then
     file = winapi.encode(codepage, winapi.CP_UTF8, file)
   end
 
@@ -1780,7 +1780,10 @@ function debugger:ScratchpadRefresh()
     and scratchpadEditor.spec.apitype == "lua"
     and not ide.interpreter.skipcompile
     and not CompileProgram(scratchpadEditor, { jumponerror = false, reportstats = false })
-    then return end
+    then
+      debugger.scratchpad.updated = false
+      return
+    end
 
     local code = StripShebang(scratchpadEditor:GetTextDyn())
     if debugger.scratchpad.running then
@@ -1795,7 +1798,7 @@ function debugger:ScratchpadRefresh()
       local filePath = debuggerMakeFileName(scratchpadEditor)
 
       -- wrap into a function call to make "return" to work with scratchpad
-      code = "(function()"..code.."\nend)()"
+      code = "(function(...)"..code.."\nend)(...)"
 
       -- this is a special error message that is generated at the very end
       -- of each script to avoid exiting the (debugee) scratchpad process.

@@ -80,7 +80,7 @@ for _, tst in ipairs({
 
   editor:SetText(tst)
   editor:ResetTokenList()
-  while IndicateAll(editor) do end
+  while editor:IndicateSymbols() do end
   local defonly = true
   for _, token in ipairs(ide:GetEditor():GetTokenList()) do
     if token.name ~= '_' then defonly = false end
@@ -133,6 +133,29 @@ ide:SetProject("t")
 is(ide:GetProject("t"):gsub("[/\\]$",""), MergeFullPath(cwd,"t"), "Project is set to the expected path.")
 local itemid = tree:FindItem("test.lua")
 ok(itemid and itemid:IsOk() and tree:IsFileKnown(itemid), ".lua files have 'known' type.")
+
+
+local spec = ide:FindSpec("py", "#!/bin/env ruby")
+is(spec.lexer, "lexlpeg.python", "Shebang detection is not triggered for known extensions.")
+
+spec = ide:FindSpec("", "#!/bin/env ruby")
+is(spec.lexer, "lexlpeg.ruby", "Shebang detection sets correct lexer.")
+is(#spec.exts, 0, "Shebang detection doesn't add extensions.")
+
+local p = ide:GetProject()
+ide.filetree.settings.mapped[p] = {}
+local res = tree:MapDirectory("foo")
+is(#ide.filetree.settings.mapped[p], 0, "MapDirectory doesn't add non-existing directory.")
+ok(res == nil, "MapDirectory reports failure to add directory.")
+local sep = GetPathSeparator()
+local dir = "../src"
+res = tree:MapDirectory(dir)
+is(#ide.filetree.settings.mapped[p], 1, "MapDirectory adds a new directory to the list.")
+ok(res == true, "MapDirectory reports success to add directory.")
+tree:MapDirectory(dir..sep)
+is(#ide.filetree.settings.mapped[p], 1, "MapDirectory skips adding the same directory.")
+tree:UnmapDirectory(dir..sep)
+ok(not ide.filetree.settings.mapped[p], "UnmapDirectory removes directory from the list.")
 
 ok(tree:SetStartFile("test.lua") ~= nil, "SetStartFile sets start file.")
 is(tree:GetStartFile(), "test.lua", "GetStartFile returns expected value.")

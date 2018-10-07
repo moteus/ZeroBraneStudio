@@ -210,6 +210,10 @@ local function treeSetConnectorsAndIcons(tree)
   function tree:IsFileStart(item_id) return isIt(item_id, image.FILEOTHERSTART) end
   function tree:IsRoot(item_id) return not tree:GetItemParent(item_id):IsOk() end
 
+  local function saveSettings()
+    ide:AddPackage('core.filetree', {}):SetSettings(filetree.settings)
+  end
+
   function tree:FindItem(match)
     return findItem(self, (wx.wxIsAbsolutePath(match) or match == '') and match
       or MergeFullPath(ide:GetProject(), match))
@@ -278,18 +282,21 @@ local function treeSetConnectorsAndIcons(tree)
 
   function tree:UnmapDirectory(path)
     local project = ide:GetProject()
-    if not project then return end
+    if not project then return nil, "Project is not set" end
 
+    local dir = wx.wxFileName.DirName(ide:MergePath(project, path))
     local mapped = filetree.settings.mapped[project] or {}
-    for k, m in ipairs(mapped) do
-      if m == path then table.remove(mapped, k) end
+    for k = #mapped,1,-1 do
+      if dir:SameAs(wx.wxFileName.DirName(mapped[k])) then table.remove(mapped, k) end
     end
     filetree.settings.mapped[project] = #mapped > 0 and mapped or nil
+    saveSettings()
     refreshAncestors(self:GetRootItem())
+    return true
   end
   function tree:MapDirectory(path)
     local project = ide:GetProject()
-    if not project then return end
+    if not project then return nil, "Project is not set" end
 
     if not path then
       local dirPicker = wx.wxDirDialog(ide.frame, TR("Choose a directory to map"),
@@ -297,17 +304,23 @@ local function treeSetConnectorsAndIcons(tree)
       if dirPicker:ShowModal(true) ~= wx.wxID_OK then return end
       local dir = wx.wxFileName.DirName(FixDir(dirPicker:GetPath()))
       -- don't remap the project directory
-      if dir:SameAs(wx.wxFileName(project)) then return end
+      if dir:SameAs(wx.wxFileName.DirName(project)) then return end
       path = dir:GetFullPath()
     end
 
+    local dir = wx.wxFileName.DirName(ide:MergePath(project, path))
+    if not dir:DirExists() then return nil, "Directory doesn't exist" end
+
     local mapped = filetree.settings.mapped[project] or {}
     for _, m in ipairs(mapped) do
-      if m == path then return end -- already on the list
+      if dir:SameAs(wx.wxFileName.DirName(m)) then return end -- already on the list
     end
-    table.insert(mapped, path)
+    -- add to the list; the path includes trailing separator used for directory detection
+    table.insert(mapped, dir:GetFullPath())
     filetree.settings.mapped[project] = mapped
+    saveSettings()
     refreshAncestors(self:GetRootItem())
+    return true
   end
 
   local empty = ""
@@ -441,6 +454,20 @@ local function treeSetConnectorsAndIcons(tree)
     return true
   end
 
+  -- localizing FileDropTarget doesn't work in wxlua 2.8.13, so keep it in a field
+  ide.filetree.filedrop = wx.wxLuaFileDropTarget()
+  ide.filetree.filedrop.OnDropFiles = function(self, x, y, filenames)
+    local item_id = tree:HitTest(wx.wxPoint(x,y))
+    -- set project if one file moved over the project directory
+    if not tree:GetItemParent(item_id):IsOk() and #filenames == 1 then
+      ide:SetProject(filenames[1])
+    else
+      for i = 1, #filenames do tree:MapDirectory(filenames[i]) end
+    end
+    return true
+  end
+  tree:SetDropTarget(ide.filetree.filedrop)
+
   tree:Connect(wx.wxEVT_COMMAND_TREE_ITEM_COLLAPSED,
     function (event)
       PackageEventHandle("onFiletreeCollapse", tree, event, event:GetItem())
@@ -471,10 +498,6 @@ local function treeSetConnectorsAndIcons(tree)
     function (event)
       tree:ActivateItem(event:GetItem())
     end)
-
-  local function saveSettings()
-    ide:AddPackage('core.filetree', {}):SetSettings(filetree.settings)
-  end
 
   -- refresh the tree
   local function refreshChildren()
@@ -592,24 +615,19 @@ local function treeSetConnectorsAndIcons(tree)
     end)
   tree:Connect(ID.SETSTARTFILE, wx.wxEVT_COMMAND_MENU_SELECTED,
     function()
-      unsetStartFile()
-      setStartFile(tree:GetFocusedItem())
-      saveSettings()
+      tree:SetStartFile(tree:GetItemFullName(tree:GetFocusedItem()))
     end)
   tree:Connect(ID.UNSETSTARTFILE, wx.wxEVT_COMMAND_MENU_SELECTED,
     function()
-      unsetStartFile()
-      saveSettings()
+      tree:SetStartFile()
     end)
   tree:Connect(ID.MAPDIRECTORY, wx.wxEVT_COMMAND_MENU_SELECTED,
     function()
       tree:MapDirectory()
-      saveSettings()
     end)
   tree:Connect(ID.UNMAPDIRECTORY, wx.wxEVT_COMMAND_MENU_SELECTED,
     function()
       tree:UnmapDirectory(tree:GetItemText(tree:GetFocusedItem()))
-      saveSettings()
     end)
   tree:Connect(ID.PROJECTDIRFROMDIR, wx.wxEVT_COMMAND_MENU_SELECTED,
     function()

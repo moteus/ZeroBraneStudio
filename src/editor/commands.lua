@@ -42,8 +42,12 @@ end
 function LoadFile(filePath, editor, file_must_exist, skipselection)
   filePath = filePath:gsub("%s+$","")
 
-  -- if the file name is empty or is a directory, don't do anything
-  if filePath == '' or wx.wxDirExists(filePath) then return nil end
+  -- if the file name is empty or is a directory or looks like a directory, don't do anything
+  if filePath == ''
+  or wx.wxDirExists(filePath)
+  or filePath:find("[/\\]$") then
+    return nil, "Invalid filename"
+  end
 
   filePath = FileNormalizePath(filePath)
   -- on some Windows versions, normalization doesn't return "original" file name,
@@ -82,6 +86,7 @@ function LoadFile(filePath, editor, file_must_exist, skipselection)
   editor:MarkerDeleteAll(-1)
   if filesize then editor:Allocate(filesize) end
   editor:SetReadOnly(false) -- disable read-only status if set on the editor
+  editor:BeginUndoAction()
   editor:SetTextDyn("")
   editor.bom = string.char(0xEF,0xBB,0xBF)
 
@@ -136,18 +141,26 @@ function LoadFile(filePath, editor, file_must_exist, skipselection)
         ide:PushStatus(TR("%s%% loaded..."):format(math.floor(100*editor:GetLength()/filesize)))
       end
     end)
-  if not ok then
-    ide:ReportError(TR("Can't open file '%s': %s"):format(filePath, err))
-    return nil
-  end
   ide:PopStatus()
 
   -- empty or non-existing files don't have bom
   if not file_text then editor.bom = false end
 
+  editor:EndUndoAction()
+  -- try one more time with shebang if the type is not known yet
+  if editor.spec == ide.specs.none then editor:SetupKeywords(GetFileExt(filePath)) end
   editor:Colourise(0, -1)
   editor:ResetTokenList() -- reset list of tokens if this is a reused editor
   editor:Thaw()
+
+  -- only report errors on existing files
+  if not ok and filesize then
+    -- restore the changes in the editor,
+    -- as it may be applied to some other content, for example, in preview
+    editor:Undo()
+    ide:ReportError(TR("Can't open file '%s': %s"):format(filePath, err))
+    return nil
+  end
 
   local edcfg = ide.config.editor
   if current then editor:GotoPos(current) end
