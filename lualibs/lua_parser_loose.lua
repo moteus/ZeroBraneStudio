@@ -82,10 +82,10 @@ function PARSE.parse_scope(lx, f, level)
     -- Detect end of previous statement
     if c.tag == 'Eof' -- trigger 'Statement' at the end of file
     or c.tag == 'Keyword' and (
-       c[1] == 'break' or c[1] == 'goto' or c[1] == 'do' or c[1] == 'while' or
+       c[1] == 'break' or c[1] == 'goto' or c[1] == 'do' or c[1] == 'while' or c[1] == 'else' or
        c[1] == 'repeat' or c[1] == 'if' or c[1] == 'for' or c[1] == 'function' and lx:peek().tag == 'Id' or
-       c[1] == 'local' or c[1] == ';' or c[1] == 'until' or c[1] == 'return' or c[1] == 'end') or
-       c.tag == 'Id' and
+       c[1] == 'local' or c[1] == ';' or c[1] == 'until' or c[1] == 'return' or c[1] == 'end')
+    or c.tag == 'Id' and
            (cprev.tag == 'Id' or
             cprev.tag == 'Keyword' and
                (cprev[1] == ']' or cprev[1] == ')' or cprev[1] == '}' or
@@ -161,7 +161,7 @@ function PARSE.parse_scope(lx, f, level)
       elseif c[1] == 'end' or c[1] == 'elseif' then
         scope_end(c[1], c.lineinfo)
       elseif c[1] == 'else' then
-        scope_end(nil, c.lineinfo)
+        scope_end(c[1], c.lineinfo)
         scope_begin(c[1], c.lineinfo)
       elseif c[1] == 'until' then
         scopes[#scopes].inside_until = true

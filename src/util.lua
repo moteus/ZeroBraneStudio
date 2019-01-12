@@ -63,11 +63,18 @@ function FileDirHasContent(dir)
   return #f>0
 end
 
+-- `fs` library provides Windows-specific functions and requires LuaJIT
+local ok, fs = pcall(require, "fs")
+if not ok then fs = nil end
+
+local function isSymlink(path) return require("lfs").attributes(path).mode == "link" end
+if fs then isSymlink = fs.is_symlink end
+
 function FileSysGetRecursive(path, recursive, spec, opts)
   local content = {}
   local showhidden = ide.config and ide.config.showhiddenfiles
   local sep = GetPathSeparator()
-  -- trip trailing separator and adjust the separator in the path
+  -- trim trailing separator and adjust the separator in the path
   path = path:gsub("[\\/]$",""):gsub("[\\/]", sep)
   local queue = {path}
   local pathpatt = "^"..EscapeMagic(path)..sep.."?"
@@ -75,6 +82,7 @@ function FileSysGetRecursive(path, recursive, spec, opts)
   local optfolder = (opts or {}).folder ~= false
   local optsort = (opts or {}).sort ~= false
   local optpath = (opts or {}).path ~= false
+  local optfollowsymlink = (opts or {}).followsymlink ~= false
   local optskipbinary = (opts or {}).skipbinary
   local optondirectory = (opts or {}).ondirectory
   local optmaxnum = tonumber((opts or {}).maxnum)
@@ -169,6 +177,7 @@ function FileSysGetRecursive(path, recursive, spec, opts)
       if optondirectory and ondirectory == nil then return false end
 
       if recursive and ismatch(fname..sep, nil, exmasks) and (ondirectory ~= false)
+      and (optfollowsymlink or not isSymlink(fname))
       -- check if this name already appears in the path earlier;
       -- Skip the processing if it does as it could lead to infinite
       -- recursion with circular references created by symlinks.
@@ -285,6 +294,48 @@ function FileWrite(file, content)
   local ok = file:Write(content, #content) == #content
   file:Close()
   return ok, not ok and wx.wxSysErrorMsg() or nil
+end
+
+function ShowLocation(fname)
+  local osxcmd = [[osascript -e 'tell application "Finder" to reveal POSIX file "%s"']]
+    .. [[ -e 'tell application "Finder" to activate']]
+  local wincmd = [[explorer /select,"%s"]]
+  local lnxcmd = [[xdg-open "%s"]] -- takes path, not a filename
+  local cmd =
+    ide.osname == "Windows" and wincmd:format(fname) or
+    ide.osname == "Macintosh" and osxcmd:format(fname) or
+    ide.osname == "Unix" and lnxcmd:format(wx.wxFileName(fname):GetPath())
+  if cmd then wx.wxExecute(cmd, wx.wxEXEC_ASYNC) end
+end
+
+-- check if fs library is available and provide better versions of available functions
+if fs then
+  function FileWrite(file, content)
+    local _ = wx.wxLogNull() -- disable error reporting; will report as needed
+
+    if not wx.wxFileExists(file)
+    and not wx.wxFileName(file):Mkdir(tonumber(755,8), wx.wxPATH_MKDIR_FULL) then
+      return nil, wx.wxSysErrorMsg()
+    end
+
+    -- use `fs` library to write a file, as this preserves its attributes
+    local f, errmsg, errcode = fs.open(file,
+      { access = 'write', creation = 'open_always', flags = 'rdwr backup_semantics'})
+    if not f then return nil, errmsg end
+
+    local ok, errmsg = f:truncate()
+    if ok then
+      local bytes, errmsg = f:write(content, #content)
+      ok = bytes == #content
+    end
+
+    f:close()
+    return ok, not ok and errmsg or nil
+  end
+
+  function ShowLocation(fname)
+    fs.shell_open_and_select(fname)
+  end
 end
 
 function FileSize(fname)
@@ -410,18 +461,6 @@ function FixDir(path)
   local dirs = dir:GetDirs()
   if #dirs > 1 and dirs[#dirs] == dirs[#dirs-1] then dir:RemoveLastDir() end
   return dir:GetFullPath()
-end
-
-function ShowLocation(fname)
-  local osxcmd = [[osascript -e 'tell application "Finder" to reveal POSIX file "%s"']]
-    .. [[ -e 'tell application "Finder" to activate']]
-  local wincmd = [[explorer /select,"%s"]]
-  local lnxcmd = [[xdg-open "%s"]] -- takes path, not a filename
-  local cmd =
-    ide.osname == "Windows" and wincmd:format(fname) or
-    ide.osname == "Macintosh" and osxcmd:format(fname) or
-    ide.osname == "Unix" and lnxcmd:format(wx.wxFileName(fname):GetPath())
-  if cmd then wx.wxExecute(cmd, wx.wxEXEC_ASYNC) end
 end
 
 function LoadLuaFileExt(tab, file, proto)

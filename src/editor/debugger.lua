@@ -349,8 +349,8 @@ function debugger:ActivateDocument(file, line, activatehow)
   local fileName = wx.wxFileName(file)
   local fileNameLower = wx.wxFileName(file:lower())
 
-  for _, document in pairs(ide.openDocuments) do
-    local editor = document.editor
+  for _, document in pairs(ide:GetDocuments()) do
+    local editor = document:GetEditor()
     -- either the file name matches, or the content;
     -- when checking for the content remove all newlines as they may be
     -- reported differently from the original by the Lua engine.
@@ -399,10 +399,8 @@ function debugger:ActivateDocument(file, line, activatehow)
         end
       end
 
-      local selection = document.index
+      document:SetActive()
       ide:RequestAttention()
-      notebook:SetSelection(selection)
-      SetEditorSelection(selection)
 
       if content then
         -- it's possible that the current editor tab already has
@@ -460,9 +458,9 @@ function debugger:reSetBreakpoints()
 
   -- go over all windows and find all breakpoints
   if (not debugger.scratchpad) then
-    for _, document in pairs(ide.openDocuments) do
-      local editor = document.editor
-      local filePath = document.filePath
+    for _, document in pairs(ide:GetDocuments()) do
+      local editor = document:GetEditor()
+      local filePath = document:GetFilePath()
       local line = editor:MarkerNext(0, BREAKPOINT_MARKER_VALUE)
       while filePath and line ~= -1 do
         debugger:handle("setb " .. filePath .. " " .. (line+1))
