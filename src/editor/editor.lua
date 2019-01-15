@@ -468,7 +468,7 @@ function IndicateIfNeeded()
   -- do the current one first
   if editor and delayed[editor] then
     return editor:IndicateSymbols() or next(delayed) ~= nil
-end
+  end
   local ed = next(delayed)
   local needmore = false
   if ide:IsValidCtrl(ed) then
