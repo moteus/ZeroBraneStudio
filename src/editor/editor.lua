@@ -357,7 +357,7 @@ function EditorCallTip(editor, pos, x, y)
     -- only shorten if shown on mouse-over. Use shortcut to get full info.
     local showtooltip = ide.frame.menuBar:FindItem(ID.SHOWTOOLTIP)
     local suffix = "...\n"
-        ..TR("Use '%s' to see full description."):format(showtooltip:GetLabel())
+        ..TR("Use '%s' to see full description."):format(showtooltip:GetItemLabel())
     if x and y and #tip > limit then
       tip = tip:sub(1, limit-#suffix):gsub("%W*%w*$","")..suffix
     end
@@ -1798,7 +1798,7 @@ function SetupKeywords(editor, ext, forcespec, styles, font, fontitalic)
   local lexerstyleconvert = nil
   local spec = forcespec or ide:FindSpec(ext, editor:GetLine(0))
   -- found a spec setup lexers and keywords
-  if spec and editor.spec == spec then return end
+  if spec and ide:IsValidProperty(editor, 'spec') and editor.spec == spec then return end
   if spec then
     if type(spec.lexer) == "string" then
       local ok, err = setLexLPegLexer(editor, spec)
