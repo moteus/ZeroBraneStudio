@@ -1861,7 +1861,7 @@ function SetupKeywords(editor, ext, forcespec, styles, font, fontitalic)
   -- the folds are not shown (wxwidgets 2.9.5)
   editor:SetProperty("fold", edcfg.fold and "1" or "0")
   if edcfg.fold then
-    editor:SetProperty("fold.html", "1")
+    editor:SetProperty("fold.html", "1") --! @moteus
     editor:SetProperty("fold.compact", edcfg.foldcompact and "1" or "0")
     editor:SetProperty("fold.comment", "1")
     editor:SetProperty("fold.line.comments", "1")
