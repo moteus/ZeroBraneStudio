@@ -145,6 +145,11 @@ local function showCommandBar(params)
     local size = results:GetVirtualSize()
     local w,h = size:GetWidth(),size:GetHeight()
     local bitmap = wx.wxBitmap(w,h)
+    local scale = ide:GetContentScaleFactor()
+    -- scale the bitmap before drawing
+    if ide:IsValidProperty(bitmap, "CreateScaled") and scale > 1 then
+      bitmap:CreateScaled(w, h, bitmap:GetDepth(), scale)
+    end
     dc:SelectObject(bitmap)
 
     -- clear the background
@@ -322,7 +327,6 @@ local function showCommandBar(params)
   results:Connect(wx.wxEVT_LEFT_DOWN, onMouseLeftDown)
   results:Connect(wx.wxEVT_ERASE_BACKGROUND, function() end)
 
-  search:SetFocus()
   search:Connect(wx.wxEVT_KEY_DOWN, onKeyDown)
   search:Connect(wx.wxEVT_COMMAND_TEXT_UPDATED, onTextUpdated)
   search:Connect(wx.wxEVT_COMMAND_TEXT_ENTER, function() onExit(linenow) end)
@@ -337,6 +341,7 @@ local function showCommandBar(params)
 
   search:SetValue((defaultText or "")..(selectedText or ""))
   search:SetSelection(#(defaultText or ""), -1)
+  search:SetFocus()
 end
 
 local sep = "[/\\%-_ ]+"
@@ -393,11 +398,12 @@ local function commandBarScoreItems(t, pattern, limit)
   local prefilter = ide.config.commandbar and tonumber(ide.config.commandbar.prefilter)
   -- anchor for 1-2 symbol patterns to speed up search
   local needanchor = prefilter and prefilter * 4 <= #t and plen <= 2
-  local pref = pattern:gsub("[^%w_]+",""):sub(1,4):lower()
+  local pref = pattern:sub(1,4):lower()
   local filter = prefilter and prefilter <= #t
     -- expand `abc` into `a.*b.*c`, but limit the prefix to avoid penalty for `s.*s.*s.*....`
-    -- if there are too many records to filter (prefilter*20), then only search for substrings
-    and (prefilter * 10 <= #t and pref or pref:gsub(".", "%1.*"):gsub("%.%*$",""))
+    -- if there are too many records to filter, then only search for substrings
+    and (prefilter * 10 <= #t and q(pref):gsub("%s+",".")
+      or pref:gsub("%s",""):gsub(".", function(s) return q(s)..".*" end):gsub("%.%*$",""))
     or nil
   local lastpercent = 0
   for n, v in ipairs(t) do
@@ -416,7 +422,7 @@ local function commandBarScoreItems(t, pattern, limit)
       -- check if the current name needs to be prefiltered or anchored (for better performance);
       -- if it needs to be anchored, then anchor it at the beginning of the string or the word
       if not filter or (match and (not needanchor or match == 1 or v:find("^[%p%s]", match-1))) then
-        local p = score(pattern, v)
+        local p = math.floor(score(pattern, v))
         maxp = math.max(p, maxp)
         if p > 1 and p > maxp / 4 then
           num = num + 1
@@ -503,7 +509,7 @@ function ShowCommandBar(default, selected)
           end
         -- insert selected method
         elseif text and text:find('^%s*'..special.METHOD) then
-          if ed then -- clean up text and insert at the current location
+          if ed and sline then -- clean up text and insert at the current location
             local method = sline
             local isfunc = methods.desc[method][1]:find(q(method).."%s*%(")
             local text = method .. (isfunc and "()" or "")

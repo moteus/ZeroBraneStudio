@@ -2,7 +2,7 @@ local editor = NewFile()
 ok(editor, "Open New file.")
 ok(editor.assignscache ~= nil, "Auto-complete cache is assigned.")
 
-local maxstat = 20000 -- maximum number of statements to detect looping
+local maxstat = 20000 * (jit and 1 or 2) -- maximum number of statements to detect looping
 local strategy = ide.config.acandtip.strategy
 
 for s = 2, 0, -1 do -- execute all tests for different `strategy` values
@@ -265,4 +265,11 @@ ok(status and res and not res:match('value'),
 ide.config.acandtip.strategy = strategy
 ide.config.acandtip.symbols = symbols
 ide:GetDocument(editor):SetModified(false)
+
+-- this provides a workaround for the macOS crash (https://trac.wxwidgets.org/ticket/18434)
+if ide.wxver >= "3.1.3" then
+  editor:AutoCompCancel()
+  wx.wxSafeYield()
+end
+
 ClosePage()

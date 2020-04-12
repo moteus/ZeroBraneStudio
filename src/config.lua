@@ -26,6 +26,7 @@ return {
     nomousezoom = false,
     saveallonrun = false,
     showfncall = false,
+    showligatures = false,
     showtabicon = false,
     showtabtooltip = true,
     smartindent = true,
@@ -221,6 +222,7 @@ return {
     fontname = nil,
     fontsize = 9,
     iconmap = {},
+    iconfontname = nil, -- font name to use in file icons
     mousemove = true,
     showchanges = true,
   },
@@ -314,14 +316,13 @@ return {
   filehistorylength = 20,
   projecthistorylength = 20,
   commandlinehistorylength = 10,
-  bordersize = 3,
+  bordersize = 2,
   savebak = false,
   singleinstance = false,
   singleinstanceport = 8172,
   showmemoryusage = false,
   showhiddenfiles = false,
   transparency = nil, -- main window transparency: 0 == invisible -> 255 == opaque
-  hidpi = false, -- HiDPI/Retina display support
   hotexit = false,
   imagetint = false,
   markertint = true,

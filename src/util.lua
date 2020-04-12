@@ -58,9 +58,19 @@ function GetPathWithSep(wxfn)
   return wxfn:GetPath(bit.bor(wx.wxPATH_GET_VOLUME, wx.wxPATH_GET_SEPARATOR))
 end
 
-function FileDirHasContent(dir)
-  local f = wx.wxFindFirstFile(dir, wx.wxFILE + wx.wxDIR)
-  return #f>0
+local function closeDir(dir)
+  -- wxlua < 3.0 doesn't provide Close method for wxDir, so check for it
+  if ide:IsValidProperty(dir, "Close") then dir:Close() end
+end
+
+function FileDirHasContent(path)
+  local dir = wx.wxDir()
+  dir:Open(path)
+  if not dir:IsOpened() then return false end
+  local found = dir:GetFirst("*", wx.wxDIR_DIRS + wx.wxDIR_FILES
+    + (ide.config.showhiddenfiles and wx.wxDIR_HIDDEN or 0))
+  closeDir(dir)
+  return found
 end
 
 -- `fs` library provides Windows-specific functions and requires LuaJIT
@@ -103,8 +113,8 @@ function FileSysGetRecursive(path, recursive, spec, opts)
         else
           -- escape all special characters
           table.insert(list, EscapeMagic(m)
-            :gsub("%%%*%%%*", ".*") -- replace (escaped) ** with .*
-            :gsub("%%%*", "[^/\\]*") -- replace (escaped) * with [^\//]*
+            :gsub("%%%*%%%*", ".*") -- replace (escaped) ** with any character (.*)
+            :gsub("%%%*", "[^/\\]*") -- replace (escaped) * with anything except path separator
             :gsub("^"..sep, ide:GetProject() or "") -- replace leading separator with project directory (if set)
             .."$")
         end
@@ -174,7 +184,7 @@ function FileSysGetRecursive(path, recursive, spec, opts)
       -- `false` to skip the directory and continue
       -- `nil` to abort the process
       local ondirectory = optondirectory and optondirectory(fname)
-      if optondirectory and ondirectory == nil then return false end
+      if optondirectory and ondirectory == nil then closeDir(dir); return false end
 
       if recursive and ismatch(fname..sep, nil, exmasks) and (ondirectory ~= false)
       and (optfollowsymlink or not isSymlink(fname))
@@ -186,7 +196,7 @@ function FileSysGetRecursive(path, recursive, spec, opts)
       end
 
       num = num + 1
-      if optmaxnum and num >= optmaxnum then return false end
+      if optmaxnum and num >= optmaxnum then closeDir(dir); return false end
 
       found, file = dir:GetNext()
     end
@@ -199,12 +209,11 @@ function FileSysGetRecursive(path, recursive, spec, opts)
       end
 
       num = num + 1
-      if optmaxnum and num >= optmaxnum then return false end
+      if optmaxnum and num >= optmaxnum then closeDir(dir); return false end
 
       found, file = dir:GetNext()
     end
-    -- wxlua < 3.1 doesn't provide Close method for the directory, so check for it
-    if ide:IsValidProperty(dir, "Close") then dir:Close() end
+    closeDir(dir)
     return true
   end
   while #queue > 0 and getDir(table.remove(queue)) do end
@@ -256,15 +265,14 @@ function FileGetLongPath(path)
   local dirs = fn:GetDirs()
   table.insert(dirs, fn:GetFullName())
   local normalized = vol and volsep and vol..volsep or (path:match("^[/\\]") or ".")
-  local hasclose = ide:IsValidProperty(dir, "Close")
   while #dirs > 0 do
     dir:Open(normalized)
     if not dir:IsOpened() then return path end
     local p = table.remove(dirs, 1)
     local ok, segment = dir:GetFirst(p)
+    closeDir(dir)
     if not ok then return path end
     normalized = MergeFullPath(normalized,segment)
-    if hasclose then dir:Close() end
   end
   local file = wx.wxFileName(normalized)
   file:Normalize(wx.wxPATH_NORM_DOTS) -- remove leading dots, if any
@@ -272,7 +280,7 @@ function FileGetLongPath(path)
 end
 
 function CreateFullPath(path)
-  local ok = wx.wxFileName.Mkdir(path, tonumber(755,8), wx.wxPATH_MKDIR_FULL)
+  local ok = wx.wxFileName.Mkdir(path, tonumber("755",8), wx.wxPATH_MKDIR_FULL)
   return ok, not ok and wx.wxSysErrorMsg() or nil
 end
 function GetFullPathIfExists(p, f)
@@ -284,7 +292,7 @@ function FileWrite(file, content)
   local _ = wx.wxLogNull() -- disable error reporting; will report as needed
 
   if not wx.wxFileExists(file)
-  and not wx.wxFileName(file):Mkdir(tonumber(755,8), wx.wxPATH_MKDIR_FULL) then
+  and not wx.wxFileName(file):Mkdir(tonumber("755",8), wx.wxPATH_MKDIR_FULL) then
     return nil, wx.wxSysErrorMsg()
   end
 
@@ -314,18 +322,19 @@ if fs then
     local _ = wx.wxLogNull() -- disable error reporting; will report as needed
 
     if not wx.wxFileExists(file)
-    and not wx.wxFileName(file):Mkdir(tonumber(755,8), wx.wxPATH_MKDIR_FULL) then
+    and not wx.wxFileName(file):Mkdir(tonumber("755",8), wx.wxPATH_MKDIR_FULL) then
       return nil, wx.wxSysErrorMsg()
     end
 
     -- use `fs` library to write a file, as this preserves its attributes
-    local f, errmsg, errcode = fs.open(file,
+    local f, errmsg = fs.open(file,
       { access = 'write', creation = 'open_always', flags = 'rdwr backup_semantics'})
     if not f then return nil, errmsg end
 
+    local bytes
     local ok, errmsg = f:truncate()
     if ok then
-      local bytes, errmsg = f:write(content, #content)
+      bytes, errmsg = f:write(content, #content)
       ok = bytes == #content
     end
 
@@ -342,8 +351,8 @@ function FileSize(fname)
   if not wx.wxFileExists(fname) then return end
   local size = wx.wxFileSize(fname)
   -- size can be returned as 0 for symlinks, so check with wxFile:Length();
-  -- can't use wxFile:Length() as it's reported incorrectly for some non-seekable files
-  -- (see https://github.com/pkulchenko/ZeroBraneStudio/issues/458);
+  -- can't only use wxFile:Length(), as it's reported incorrectly for some non-seekable
+  -- files (see https://github.com/pkulchenko/ZeroBraneStudio/issues/458);
   -- the combination of wxFileSize and wxFile:Length() should do the right thing.
   if size == 0 then size = wx.wxFile(fname, wx.wxFile.read):Length() end
   return size
@@ -395,7 +404,7 @@ function FileCopy(file1, file2)
   return wx.wxCopyFile(file1, file2), wx.wxSysErrorMsg()
 end
 
-function IsBinary(text) return text:find("[^\7\8\9\10\12\13\27\32-\255]") and true or false end
+function IsBinary(text) return text and text:find("[^\7\8\9\10\12\13\27\32-\255]") and true or false end
 
 function pairsSorted(t, f)
   local a = {}
@@ -505,6 +514,7 @@ function LoadLuaConfig(filename,isstring)
   -- if it's marked as command, but exists as a file, load it as a file
   if isstring and wx.wxFileExists(filename) then isstring = false end
 
+  local loadstring = loadstring or load
   local cfgfn, err, msg
   if isstring
   then msg, cfgfn, err = "string", loadstring(filename)
@@ -525,6 +535,7 @@ function LoadLuaConfig(filename,isstring)
 end
 
 function LoadSafe(data)
+  local loadstring = loadstring or load
   local f, res = loadstring(data)
   if not f then return f, res end
 

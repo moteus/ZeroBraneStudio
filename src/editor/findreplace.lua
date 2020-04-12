@@ -257,6 +257,7 @@ end
 
 local indicator = {
   SEARCHMATCH = ide:GetIndicator("core.searchmatch"),
+  SEARCHSELECTION = ide:GetIndicator("core.searchselection"),
 }
 
 -- returns true if replacements were done
@@ -436,7 +437,9 @@ local knownBinary = {}
 local function checkBinary(ext, content)
   if not content then return knownBinary[ext] end
   if ext == "" then return IsBinary(content) end
-  if knownBinary[ext] == nil then knownBinary[ext] = IsBinary(content) end
+  if knownBinary[ext] == nil then
+    knownBinary[ext] = #ide:GetKnownExtensions(ext) == 0 and IsBinary(content)
+  end
   return knownBinary[ext]
 end
 
@@ -756,7 +759,8 @@ function findReplace:createToolbar()
     self.panel, self.toolbar, self.scope, self.status
   local icons = icons[self.replace and "replace" or "find"][self.infiles and "infiles" or "internal"]
 
-  local toolBmpSize = wx.wxSize(16, 16)
+  local iconsize = ide:GetBestIconSize()
+  local toolBmpSize = wx.wxSize(iconsize, iconsize)
   tb:Freeze()
   tb:Clear()
   for _, id in ipairs(icons) do
@@ -811,6 +815,11 @@ function findReplace:createToolbar()
     optseltool:SetSticky(self.inselection)
     local ed = self:GetEditor()
     local inselection = ed and ed:LineFromPosition(ed:GetSelectionStart()) ~= ed:LineFromPosition(ed:GetSelectionEnd())
+    -- also check if the same editor previously had selection
+    if not inselection and self.backfocus and self.backfocus.editor == ed then
+      local bf = self.backfocus
+      inselection = ed:LineFromPosition(bf.spos) ~= ed:LineFromPosition(bf.epos)
+    end
     tb:EnableTool(ID.FINDOPTSELECTION, self.inselection or inselection)
     ctrl:Connect(ID.FINDOPTSELECTION, wx.wxEVT_COMMAND_MENU_SELECTED,
       function (event)
@@ -867,6 +876,15 @@ function findReplace:refreshToolbar(value)
   self.scope:SetMinSize(wx.wxSize(scope:GetTextExtent(value..'AZ'), -1))
   self:createToolbar()
   self.scope:SetValue(value)
+end
+
+function findReplace:clearSelection()
+  local editor = self.backfocus and ide:IsValidCtrl(self.backfocus.editor) and self.backfocus.editor
+  if editor then
+    -- always clear the search in selection indicator
+    editor:SetIndicatorCurrent(indicator.SEARCHSELECTION)
+    editor:IndicatorClearRange(0, editor:GetLength())
+  end
 end
 
 function findReplace:createPanel()
@@ -992,9 +1010,6 @@ function findReplace:createPanel()
   end
 
   local function findIncremental(event)
-    -- don't do any incremental search when search in selection
-    if self.inselection then return end
-
     if not self.infiles and self.backfocus and self.backfocus.position then
       self:GetEditor():SetSelection(self.backfocus.position, self.backfocus.position)
     end
@@ -1073,22 +1088,11 @@ function findReplace:createPanel()
     if ed and ed ~= self.oveditor then
       local spos, epos = ed:GetSelectionStart(), ed:GetSelectionEnd()
       if not self.backfocus or self.backfocus.editor ~= ed then
+        self:clearSelection() -- clear current selection if switching editors
         self.backfocus = { editor = ed, spos = spos, epos = epos }
       end
       local bf = self.backfocus
       bf.position = spos == epos and ed:GetCurrentPos() or spos
-      local inselection = (ide.config.search.autoinselection
-        and ed:LineFromPosition(spos) ~= ed:LineFromPosition(epos))
-
-      -- when the focus is changed, don't remove current "inselection" status as the
-      -- selection may change to highlight the match; not doing this makes it difficult
-      -- to switch between searching and replacing without losing the current match
-      if inselection and (not self.inselection or bf.spos ~= spos or bf.epos ~= epos) then
-        bf.spos = spos
-        bf.epos = epos
-        self.inselection = inselection
-        self:refreshToolbar()
-      end
     end
   end
   findCtrl:Connect(wx.wxEVT_SET_FOCUS,
@@ -1183,9 +1187,14 @@ function findReplace:refreshPanel(replace, infiles)
       self:SetScope(proj or wx.wxGetCwd(), '*.'..(#ext > 0 and ext or '*')))
   end
   if ed then -- check if there is any selection
-    self.backfocus = nil
+    local s, e = ed:GetSelectionStart(), ed:GetSelectionEnd()
     self.inselection = (ide.config.search.autoinselection
-      and ed:LineFromPosition(ed:GetSelectionStart()) ~= ed:LineFromPosition(ed:GetSelectionEnd()))
+      and ed:LineFromPosition(s) ~= ed:LineFromPosition(e))
+    if self.inselection then
+      ed:SetIndicatorCurrent(indicator.SEARCHSELECTION)
+      ed:IndicatorClearRange(0, ed:GetLength())
+      ed:IndicatorFillRange(s, e-s)
+    end
   end
   self:refreshToolbar(value)
 
@@ -1242,6 +1251,8 @@ function findReplace:Hide(restorepos)
   elseif self:IsPreview(self.reseditor) then -- there is a preview, go there
     self.reseditor:SetFocus()
   end
+
+  self:clearSelection()
 
   local mgr = ide:GetUIManager()
   mgr:GetPane(searchpanel):Hide()

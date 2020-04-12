@@ -11,14 +11,14 @@ local function isproc()
 end
 local iswindows = os.getenv('WINDIR') or (os.getenv('OS') or ''):match('[Ww]indows')
 local islinux = not iswindows and isproc()
-local arch = "x86" -- use 32bit by default
+local arch = iswindows or islinux and "x86" or "x64" -- non-x86 linux is checked separately
 local unpack = table.unpack or unpack
 
 if islinux then
   local file = io.popen("uname -m")
   if file then
-    local machine=file:read("*l")
-    local archtype= {
+    local machine = file:read("*l")
+    local archtype = {
       x86_64  = "x64",
       armv7l  = "armhf",
       aarch64 = "aarch64",
@@ -26,17 +26,27 @@ if islinux then
     arch = archtype[machine] or arch
     file:close()
   end
+  -- check if 64bit kernel is used with 32bit userspace
+  if arch == "x64" then
+    local file = io.popen("file -L /sbin/init")
+    if file then
+      local init = file:read("*l")
+      if init and init:find("ELF 32-bit") then arch = "x86" end
+      file:close()
+    end
+  end
 end
 
+local luaver = (_VERSION and _VERSION:match("Lua (%d%.%d)") or ""):gsub("%.",""):gsub("51","")
 package.cpath = (
-  iswindows and 'bin/clibs/?.dll;' or
-  islinux and ('bin/linux/%s/clibs/lib?.so;bin/linux/%s/clibs/?.so;'):format(arch,arch) or
-  --[[isosx]] 'bin/clibs/lib?.dylib;bin/clibs/?.dylib;')
+  iswindows and ('bin/clibs%s/?.dll;'):format(luaver) or
+  islinux and ('bin/linux/%s/clibs%s/lib?.so;bin/linux/%s/clibs%s/?.so;'):format(arch,luaver,arch,luaver) or
+  --[[isosx]] ('bin/clibs%s/lib?.dylib;bin/clibs%s/?.dylib;'):format(luaver,luaver))
     .. package.cpath
 package.path  = 'lualibs/?.lua;lualibs/?/?.lua;lualibs/?/init.lua;' .. package.path
 
 require("wx")
-require("bit")
+if not bit then require("bit") end
 require("mobdebug")
 if jit and jit.on then jit.on() end -- turn jit "on" as "mobdebug" may turn it off for LuaJIT
 
@@ -145,6 +155,10 @@ if not wx.wxNOT_FOUND then wx.wxNOT_FOUND = -1 end
 if not wx.wxEXEC_NOEVENTS then wx.wxEXEC_NOEVENTS = 16 end
 if not wx.wxEXEC_HIDE_CONSOLE then wx.wxEXEC_HIDE_CONSOLE = 32 end
 if not wx.wxEXEC_BLOCK then wx.wxEXEC_BLOCK = wx.wxEXEC_SYNC + wx.wxEXEC_NOEVENTS end
+
+-- use wxLuaProcess if available; this protects against double delete of wxProcess:
+-- in the default OnTerminate and in wxlua GC, which may cause a crash on exit
+if wx.wxLuaProcess then wx.wxProcess = wx.wxLuaProcess end
 
 for k,v in pairs({
     VS_NONE = 0, VS_RECTANGULARSELECTION = 1, VS_USERACCESSIBLE = 2, VS_NOWRAPLINESTART = 4
@@ -869,10 +883,5 @@ end
 
 wx.wxGetApp():MainLoop()
 
--- There are several reasons for this call:
--- (1) to fix a crash on OSX when closing with debugging in progress.
--- (2) to fix a crash on Linux 32/64bit during GC cleanup in wxlua
--- after an external process has been started from the IDE.
--- (3) to fix exit on Windows when started as "bin\lua src\main.lua"
--- and debugging started and stopped.
+-- protect from occasional crash on macOS and Linux from `wxluaO_deletegcobject`
 os.exit()

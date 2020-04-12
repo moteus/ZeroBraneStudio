@@ -7,6 +7,7 @@ local ide = ide
 local frame = ide.frame
 local bottomnotebook = frame.bottomnotebook
 local out = bottomnotebook.errorlog
+local unpack = table.unpack or unpack
 
 local MESSAGE_MARKER = StylesGetMarker("message")
 local ERROR_MARKER = StylesGetMarker("error")
@@ -15,12 +16,11 @@ local PROMPT_MARKER_VALUE = 2^PROMPT_MARKER
 
 local config = ide.config.output
 
-out:SetFont(wx.wxFont(config.fontsize or 10, wx.wxFONTFAMILY_MODERN, wx.wxFONTSTYLE_NORMAL,
+out:SetFont(ide:CreateFont(config.fontsize or 10, wx.wxFONTFAMILY_MODERN, wx.wxFONTSTYLE_NORMAL,
   wx.wxFONTWEIGHT_NORMAL, false, config.fontname or "",
   config.fontencoding or wx.wxFONTENCODING_DEFAULT)
 )
 out:StyleSetFont(wxstc.wxSTC_STYLE_DEFAULT, out:GetFont())
-out:SetBufferedDraw(not ide.config.hidpi and true or false)
 out:StyleClearAll()
 out:SetMarginWidth(1, 16) -- marker margin
 out:SetMarginType(1, wxstc.wxSTC_MARGIN_SYMBOL)
@@ -46,7 +46,7 @@ function OutputAddStyles(styles)
     -- to avoid modifying all editor styles with "ansi" ones,
     -- as they will conflict with lexer-specific styles
     if ide.config.styles == styles then
-      local stylecopy = {}
+      local stylecopy = StylesGetDefault()
       for k,v in pairs(styles) do stylecopy[k] = v end
       styles = stylecopy
       ide.config.stylesoutshell = styles
@@ -183,7 +183,7 @@ local function unHideWindow(pidAssign)
     local wins = winapi.find_all_windows(function(w)
       return w:get_process():get_pid() == pid
     end)
-    local any = ide.interpreter.unhideanywindow
+    local any = ide.interpreter and ide.interpreter.unhideanywindow
     local show, hide, ignore = 1, 2, 0
     for _,win in pairs(wins) do
       -- win:get_class_name() can return nil if the window is already gone
@@ -333,10 +333,12 @@ local function getStreams(all)
     str = str .. "\n"
     for _,v in pairs(tab) do
       local pfn
-      if (v.callback) then
+      if v.callback then
         str,pfn = v.callback(str)
       end
-      v.stream:Write(str, #str)
+      if str then
+        v.stream:Write(str, #str)
+      end
       updateInputMarker()
       pfn = pfn and pfn()
     end
@@ -380,6 +382,9 @@ out:Connect(wx.wxEVT_END_PROCESS, function(event)
         DisplayOutputLn(TR("Program completed in %.2f seconds (pid: %d).")
           :format(ide:GetTime() - customprocs[pid].started, pid))
       end
+      -- this protects against the object referenced in wxProcess being collected
+      -- before the wxProcess itself is collected, which may cause a crash on exit
+      if customprocs[pid].proc then customprocs[pid].proc:Detach() end
       customprocs[pid] = nil
     end
   end)

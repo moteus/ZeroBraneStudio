@@ -121,6 +121,11 @@ function ide:GetLaunchPath(addparams)
   end
   return path
 end
+function ide:IsExiting(newval)
+  if newval == nil then return self.exitingProgram end
+  self.exitingProgram = newval
+  return
+end
 function ide:Exit(hotexit)
   if hotexit then self.config.hotexit = true end
   self:GetMainFrame():Close()
@@ -206,10 +211,19 @@ function ide:SetDebugger(deb)
   if self:IsValidProperty(console, 'GetRemote') and console:GetRemote() then console:SetRemote(deb:GetConsole()) end
   return deb
 end
+function ide:GetContentScaleFactor()
+  if not self:IsValidProperty(self.frame, "GetContentScaleFactor") then return 1 end
+  local scale = self.frame:GetContentScaleFactor()
+  if scale == -1 then return 1 end -- special value indicating "no information"
+  -- convert `y` such that `x+0.75 <= y < x+1.75` to `x+1`
+  return math.floor(0.25+scale)
+end
 function ide:GetMainFrame()
   if not self.frame then
+    local screen = wx.wxDisplay():GetClientArea()
     self.frame = wx.wxFrame(wx.NULL, wx.wxID_ANY, self:GetProperty("editor"),
-      wx.wxDefaultPosition, wx.wxSize(1100, 700))
+      wx.wxDefaultPosition,
+      wx.wxSize(math.floor(screen:GetWidth()*0.8), math.floor(screen:GetHeight()*0.8)))
       -- transparency range: 0 == invisible -> 255 == opaque
       -- set lower bound of 50 to prevent accidental invisibility
       local transparency = tonumber(self:GetConfig().transparency)
@@ -262,7 +276,26 @@ function ide:GetKnownExtensions(ext)
   return knownexts
 end
 
-function ide:DoWhenIdle(func) table.insert(self.onidle, func) end
+function ide:DoWhenIdle(func, group)
+  -- check if there are any group leftovers and remove them
+  if #self.onidle == 0 and next(self.onidle) then
+    self.onidle = {}
+  end
+  if group then
+    -- if there is already an element for the same group
+    if self.onidle[group] then
+      -- find and remove it, as it's not needed anymore
+      for i = 1, #self.onidle do
+        if self.onidle[i] == self.onidle[group] then
+          table.remove(self.onidle, i)
+          break
+        end
+      end
+    end
+    self.onidle[group] = func
+  end
+  table.insert(self.onidle, func)
+end
 
 function ide:FindTopMenu(item)
   local index = self:GetMenuBar():FindMenu((TR)(item))
@@ -332,7 +365,8 @@ function ide:MakeMenu(t)
           -- only add icons to "normal" items (OSX can take them on checkbox items too),
           -- otherwise this causes asert on Linux (http://trac.wxwidgets.org/ticket/17123)
           and (ide.osname == "Macintosh" or item:GetKind() == wx.wxITEM_NORMAL) then
-            local bitmap = ide:GetBitmap(iconmap[id][1], "TOOLBAR", wx.wxSize(16,16))
+            local bitmap = ide:GetBitmap(iconmap[id][1], "TOOLBAR",
+              wx.wxSize(16*ide:GetContentScaleFactor(), 16*ide:GetContentScaleFactor()))
             item:SetBitmap(bitmap)
           end
           menu:Append(item)
@@ -420,6 +454,20 @@ function ide:GetTextFromUser(message, caption, value)
   return res == wx.wxID_OK and dlg:GetValue() or nil, res
 end
 
+function ide:GetTabArt()
+  local tabart = wxaui.wxAuiGenericTabArt and wxaui.wxAuiGenericTabArt() or wxaui.wxAuiDefaultTabArt()
+  -- editor tab height is off by 1 pixel on macOS between tabs with images and not
+  -- (as the height of the image is 16 pixels, but height of the font line is 15),
+  -- so increase the measuring font a bit to make all tabs of the same height
+  if ide.osname == "Macintosh" then
+    local font = wx.wxFont(wx.wxNORMAL_FONT)
+    font:SetWeight(wx.wxFONTWEIGHT_BOLD)
+    font:SetPointSize(font:GetPointSize()+1)
+    tabart:SetMeasuringFont(font)
+  end
+  return tabart
+end
+
 local statusreset
 function ide:SetStatusFor(text, interval, field)
   field = field or 0
@@ -503,7 +551,7 @@ local rawMethods = {"AddTextDyn", "InsertTextDyn", "AppendTextDyn", "SetTextDyn"
 local useraw = nil
 
 local invalidUTF8, invalidLength
-local suffix = "\1\0"
+local suffix = "\0"
 local DF_TEXT = wx.wxDataFormat(wx.wxDF_TEXT)
 
 function ide:CreateStyledTextCtrl(...)
@@ -524,6 +572,14 @@ function ide:CreateStyledTextCtrl(...)
     end
   end
 
+  -- `AppendTextRaw` and `AddTextRaw` methods may accept the length of text,
+  -- which is important for appending binary strings that may include zeros.
+  -- Add text length when it's not provided.
+  for _, m in ipairs(useraw and {"AppendTextRaw", "AddTextRaw"} or {}) do
+    local orig = editor[m]
+    editor[m] = function(self, text, length) return orig(self, text, length or #text) end
+  end
+
   -- map all `GetTextDyn` to `GetText` or `GetTextRaw` if `*Raw` methods are present
   editor.useraw = useraw
   for _, m in ipairs(rawMethods) do
@@ -540,7 +596,7 @@ function ide:CreateStyledTextCtrl(...)
     local text = self:GetSelectedTextRaw()
     if text == "" or wx.wxString.FromUTF8(text) ~= "" then return self:Copy() end
     local tdo = wx.wxTextDataObject()
-    -- append suffix as wxwidgets (3.1+ on Windows) truncate last char for odd-length strings
+    -- append suffix as wxwidgets (3.1+ on Windows) truncates last char for odd-length strings
     local workaround = ide.osname == "Windows" and (#text % 2 > 0) and suffix or ""
     tdo:SetData(DF_TEXT, text..workaround)
     invalidUTF8, invalidLength = text, tdo:GetDataSize()
@@ -560,7 +616,7 @@ function ide:CreateStyledTextCtrl(...)
     clip:Close()
     local ok, text = tdo:GetDataHere(DF_TEXT)
     -- check if the fragment being pasted is a valid UTF-8 sequence
-    if ide.osname == "Windows" then text = text and text:gsub(suffix.."+$","") end
+    if ide.osname == "Windows" then text = text and text:gsub("%z+$", "") end
     if not ok or wx.wxString.FromUTF8(text) ~= ""
     or not invalidUTF8 or invalidLength ~= tdo:GetDataSize() then return self:Paste() end
 
@@ -747,6 +803,19 @@ function ide:CreateStyledTextCtrl(...)
 
   function editor:SetupKeywords(...) return SetupKeywords(self, ...) end
 
+  -- this is a workaround for the auto-complete popup showing large font
+  -- when Settechnology(1) is used to enable DirectWrite support.
+  -- See https://trac.wxwidgets.org/ticket/17804#comment:32
+  for _, method in ipairs({"AutoCompShow", "UserListShow"}) do
+    local orig = editor[method]
+    editor[method] = function (editor, ...)
+      local tech = editor:GetTechnology()
+      if tech ~= 0 then editor:SetTechnology(wxstc.wxSTC_TECHNOLOGY_DEFAULT) end
+      orig(editor, ...)
+      if tech ~= 0 then editor:SetTechnology(tech) end
+    end
+  end
+
   editor:Connect(wx.wxEVT_KEY_DOWN,
     function (event)
       local keycode = event:GetKeyCode()
@@ -783,6 +852,14 @@ function ide:CreateTreeCtrl(...)
   local ctrl = wx.wxTreeCtrl(...)
   if not ctrl then return end
 
+  -- explicitly disable lines on macOS and Linux (wxwidgets v3.1.3+)
+  if ide.osname == "Unix" or ide.osname == "Macintosh" then
+    local flags = ctrl:GetWindowStyleFlag()
+    if bit.band(flags, wx.wxTR_NO_LINES) == 0 then
+      ctrl:SetWindowStyleFlag(flags + wx.wxTR_NO_LINES)
+    end
+  end
+
   if not self:IsValidProperty(ctrl, "SetFocusedItem") then
     -- versions of wxlua prior to 3.1 may not have SetFocuseditem
     function ctrl:SetFocusedItem(item)
@@ -793,7 +870,7 @@ function ide:CreateTreeCtrl(...)
 
   local hasGetFocused = self:IsValidProperty(ctrl, "GetFocusedItem")
   if not hasGetFocused then
-    -- versions of wxlua prior to 3.1 may not have SetFocuseditem
+    -- versions of wxlua prior to 3.1 may not have GetFocusedItem
     function ctrl:GetFocusedItem() return self:GetSelections()[1] end
   end
 
@@ -811,6 +888,19 @@ function ide:CreateTreeCtrl(...)
       end)
   end
   return ctrl
+end
+
+function ide:CreateFont(size, family, style, weight, underline, name, encoding)
+  local font = wx.wxFont(size, family, style, weight, underline, "", encoding)
+  if name > "" then
+    -- assign the face name separately to detect when it fails to load the font
+    font:SetFaceName(name)
+    if ide:IsValidProperty(font, "IsOk") and not font:IsOk() then
+      -- assign default font from the same family if the exact font is not loaded
+      font = wx.wxFont(size, family, style, weight, underline, "", encoding)
+    end
+  end
+  return font
 end
 
 function ide:LoadFile(...) return LoadFile(...) end
@@ -874,10 +964,20 @@ function ide:ExecuteCommand(cmd, wdir, callback, endcallback)
   return pid
 end
 
+function ide:GetBestIconSize()
+  -- use large icons by default on OSX and on large screens
+  local iconsize = tonumber(ide.config.toolbar and ide.config.toolbar.iconsize)
+  local scale = ide:GetContentScaleFactor()
+  return (iconsize and (iconsize % 8) == 0 and iconsize
+    or ((ide.osname == 'Macintosh' or wx.wxGetClientDisplayRect():GetWidth() >= 1280)
+      and scale*24 or (scale>3 and 48 or scale*16)))
+end
+
 function ide:CreateImageList(group, ...)
   local _ = wx.wxLogNull() -- disable error reporting in popup
-  local size = wx.wxSize(16,16)
-  local imglist = wx.wxImageList(16,16)
+  local scaledsize = 16*ide:GetContentScaleFactor()
+  local size = wx.wxSize(scaledsize, scaledsize)
+  local imglist = wx.wxImageList(scaledsize, scaledsize)
 
   for i = 1, select('#', ...) do
     local icon, file = self:GetBitmap(select(i, ...), group, size)
@@ -953,21 +1053,31 @@ function ide:GetBitmap(id, client, size)
   local fileClient = self:GetAppName() .. "/res/" .. keyclient .. ".png"
   local fileKey = self:GetAppName() .. "/res/" .. key .. ".png"
   local isImage = type(mapped) == 'userdata' and mapped:GetClassInfo():GetClassName() == 'wxImage'
-  local file
+  local scale = self:GetContentScaleFactor()
+  local file, bmp
   if mapped and (isImage or wx.wxFileName(mapped):FileExists()) then file = mapped
   elseif wx.wxFileName(fileClient):FileExists() then file = fileClient
   elseif wx.wxFileName(fileKey):FileExists() then file = fileKey
   else
-    if width > 16 and width % 2 == 0 then
-      local _, f = self:GetBitmap(id, client, wx.wxSize(width/2, width/2))
+    if width > 16 and scale > 1 and width % scale == 0 then
+      local _, f = self:GetBitmap(id, client, wx.wxSize(width/scale, width/scale))
       if f then
         local img = wx.wxBitmap(f):ConvertToImage()
-        file = img:Rescale(width, width, wx.wxIMAGE_QUALITY_NEAREST)
+        bmp = wx.wxBitmap(img:Rescale(width, width, wx.wxIMAGE_QUALITY_NEAREST))
+        file = fileClient
       end
     end
-    if not file then return wx.wxArtProvider.GetBitmap(id, client, size) end
+    if not file then
+      bmp = wx.wxArtProvider.GetBitmap(id, client, size)
+      file = fileClient
+    end
   end
-  local icon = icons[file] or iconFilter(wx.wxBitmap(file), self.config.imagetint)
+  local icon = icons[file] or iconFilter(bmp or wx.wxBitmap(file), self.config.imagetint)
+  -- convert bitmap to set proper scaling on it, but only if scaling is supported;
+  -- this requires special constructor that acceps additional (scale) parameter
+  if ide.wxver >= "3.1.2" and scale > 1 then
+    icon = wx.wxBitmap(icon:ConvertToImage(), icon:GetDepth(), scale)
+  end
   icons[file] = icon
   return icon, file
 end
@@ -981,32 +1091,37 @@ local function str2rgb(str)
   local ratio = 256/(r + g + b + 1e-6)
   return {math.floor(r*ratio), math.floor(g*ratio), math.floor(b*ratio)}
 end
-local clearbmps = {}
+local iconfont
 function ide:CreateFileIcon(ext)
   local iconmap = ide.config.filetree.iconmap
+  local mac = ide.osname == "Macintosh"
   local color = type(iconmap)=="table" and type(iconmap[ext])=="table" and iconmap[ext].fg
+  local scale = ide:GetContentScaleFactor()
   local size = 16
-  local bitmap = wx.wxBitmap(size, size)
-  if not clearbmps[size] then
-    clearbmps[size] = ide:GetBitmap("FILE-NORMAL-CLR", "PROJECT", wx.wxSize(size,size))
-  end
-  local clearbmp = clearbmps[size]
-  local font = wx.wxFont(ide.font.editor)
-  font:SetPointSize(ide.osname == "Macintosh" and 6 or 5)
+  local bitmap = ide:GetBitmap("FILE-NORMAL-CLR", "PROJECT", wx.wxSize(size*scale,size*scale))
+  -- macOS does its own scaling for drawing on DC surface, so set to no scaling
+  if mac then scale = 1 end
+  bitmap = wx.wxBitmap(bitmap:GetSubBitmap(wx.wxRect(0, 0, size*scale, size*scale)))
+  iconfont = iconfont or ide:CreateFont(mac and 6 or 5,
+    wx.wxFONTFAMILY_MODERN, wx.wxFONTSTYLE_NORMAL, wx.wxFONTWEIGHT_NORMAL, false,
+    ide.config.filetree.iconfontname or ide.config.editor.fontname or "", wx.wxFONTENCODING_DEFAULT)
   local mdc = wx.wxMemoryDC()
   mdc:SelectObject(bitmap)
-  mdc:SetFont(font)
-  mdc:SetBackground(wx.wxTRANSPARENT_BRUSH)
-  mdc:Clear()
-  mdc:DrawBitmap(clearbmp, 0, 0, true)
+  mdc:SetFont(iconfont)
   mdc:SetTextForeground(wx.wxColour(0, 0, 32)) -- used fixed neutral color for text
-  mdc:DrawText(ext:sub(1,3), 2, 6) -- take first three letters only
+  -- take first three letters of the extension
+  local text = ext:sub(1,3)
+  local topstripe = 3*scale
+  local topborder = 2*scale
+  local w, h = mdc:GetTextExtent(text)
+  mdc:DrawText(text, (size*scale-w)/2, topstripe+topborder+(size*scale-topstripe-topborder-h-1)/2)
   if #ext > 0 then
     local clr = wx.wxColour(unpack(type(color)=="table" and color or str2rgb(ext)))
     mdc:SetPen(wx.wxPen(clr, 1, wx.wxSOLID))
     mdc:SetBrush(wx.wxBrush(clr, wx.wxSOLID))
-    mdc:DrawRectangle(1, 2, 14, 3)
+    mdc:DrawRectangle(1*scale, topborder, (size-(mac and 1 or 2))*scale, topstripe)
   end
+  mdc:SetFont(wx.wxNullFont)
   mdc:SelectObject(wx.wxNullBitmap)
   bitmap:SetMask(wx.wxMask(bitmap, wx.wxBLACK)) -- set transparent background
   return bitmap
@@ -1157,7 +1272,11 @@ function ide:AddConfig(name, files)
   if type(files) ~= "table" then files = {files} end -- allow to pass one value
   configcache[name] = {
     config = require('mobdebug').dump(self.config, {nocode = true}),
-    configmeta = getmetatable(self.config),
+    configmeta = {
+      [0] = getmetatable(self.config),
+      styles = getmetatable(self.config.styles),
+      stylesoutshell = getmetatable(self.config.stylesoutshell),
+    },
     packages = {},
     overrides = {},
   }
@@ -1199,7 +1318,10 @@ function ide:RemoveConfig(name)
     self.config = res
     -- restore overrides
     for key, value in pairs(configcache[name].overrides) do setLongKey(self.config, key, value) end
-    if configcache[name].configmeta then setmetatable(self.config, configcache[name].configmeta) end
+    -- restore metatables on a set of (predefined) config elements
+    for metaname, metaval in pairs(configcache[name].configmeta) do
+       setmetatable(metaname == 0 and self.config or self.config[metaname], metaval)
+    end
   else
     ide:Print(("Error while restoring configuration: '%s'."):format(res))
   end
@@ -1220,6 +1342,7 @@ function ide:AddPanel(ctrl, panel, name, conf)
     wx.wxDefaultPosition, wx.wxDefaultSize,
     wxaui.wxAUI_NB_DEFAULT_STYLE + wxaui.wxAUI_NB_TAB_EXTERNAL_MOVE
     - wxaui.wxAUI_NB_CLOSE_ON_ACTIVE_TAB + wx.wxNO_BORDER)
+  notebook:SetArtProvider(ide:GetTabArt())
   notebook:AddPage(ctrl, name, true)
   notebook:Connect(wxaui.wxEVT_COMMAND_AUINOTEBOOK_BG_DCLICK,
     function() PaneFloatToggle(notebook) end)
@@ -1427,7 +1550,7 @@ function ide:SetHotKey(id, ksc)
         keymap[gid] = ""
         -- try to find a menu item with this ID (if any) to remove the hotkey
         local item = self:FindMenuItem(gid)
-        if item then item:SetItemLabel(item:GetItemLabel():gsub("\t.+","").."") end
+        if item then item:SetItemLabel(item:GetItemLabelText()) end
       end
       -- continue with the loop as there may be multiple associations with the same hotkey
     end
@@ -1451,8 +1574,8 @@ function ide:SetHotKey(id, ksc)
 
   local item = self:FindMenuItem(id)
   if item then
-    -- get the item text and replace the shortcut; make sure to the accelerator (if any)
-    item:SetItemLabel(item:GetItemLabel():gsub("\t.+","")..KSC(nil, ksc))
+    -- get the item text and replace the shortcut; make sure to add the accelerator (if any)
+    item:SetItemLabel(item:GetItemLabelText()..KSC(nil, ksc))
   end
 
   -- if there is no keymap or menu item, then use the accelerator
@@ -1471,7 +1594,7 @@ function ide:IsProjectSubDirectory(dir)
 end
 
 function ide:IsSameDirectoryPath(s1, s2)
-  return wx.wxFileName.DirName(s1):SameAs(wx.wxFileName.DirName(s2))
+  return s1 and s2 and wx.wxFileName.DirName(s1):SameAs(wx.wxFileName.DirName(s2)) or false
 end
 
 function ide:SetCommandLineParameters(params)

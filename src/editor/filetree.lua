@@ -341,15 +341,17 @@ local function treeSetConnectorsAndIcons(tree)
     -- check if existing file/dir is going to be overwritten
     local overwrite = ((wx.wxFileExists(target) or wx.wxDirExists(target))
       and not wx.wxFileName(source):SameAs(fn))
+    local doc = ide:FindDocument(target)
+    if overwrite and doc then doc:SetActive() end
     if overwrite and not ApproveFileOverwrite() then return false end
 
-    if not fn:Mkdir(tonumber(755,8), wx.wxPATH_MKDIR_FULL) then
+    if not fn:Mkdir(tonumber("755",8), wx.wxPATH_MKDIR_FULL) then
       ide:ReportError(TR("Unable to create directory '%s'."):format(target))
       return false
     end
 
     if isnew then -- new directory or file; create manually
-      if (isdir and not wx.wxFileName.DirName(target):Mkdir(tonumber(755,8), wx.wxPATH_MKDIR_FULL))
+      if (isdir and not wx.wxFileName.DirName(target):Mkdir(tonumber("755",8), wx.wxPATH_MKDIR_FULL))
       or (not isdir and not FileWrite(target, "")) then
         ide:ReportError(TR("Unable to create file '%s'."):format(target))
         return false
@@ -388,6 +390,9 @@ local function treeSetConnectorsAndIcons(tree)
       doc:SetFileModifiedTime(GetFileModTime(path))
       doc:SetTabText(doc:GetFileName())
       if doc:IsActive() then doc:SetActive() end
+      -- reset target document if it matches one of the source docs
+      -- this may happen if one of the opened documents is renamed
+      if doc == targetdoc then targetdoc = nil end
     end
 
     -- close the target document, since the source has already been updated for it
@@ -520,6 +525,16 @@ local function treeSetConnectorsAndIcons(tree)
     return item
   end
 
+  local function updateItemImage(item_id)
+    if item_id and item_id:IsOk() then
+      local path = tree:GetItemFullName(item_id)
+      tree:SetItemImage(item_id, getIcon(path))
+      -- if the file is opened, then change the tab icon as well
+      local doc = ide:FindDocument(path)
+      if doc then doc:SetTabText() end
+    end
+  end
+
   local function unsetStartFile()
     local project = ide:GetProject()
     if not project then return end
@@ -527,10 +542,7 @@ local function treeSetConnectorsAndIcons(tree)
     local startfile = filetree.settings.startfile[project]
     filetree.settings.startfile[project] = nil
     if startfile then
-      local item_id = tree:FindItem(startfile)
-      if item_id and item_id:IsOk() then
-        tree:SetItemImage(item_id, getIcon(tree:GetItemFullName(item_id)))
-      end
+      updateItemImage(tree:FindItem(startfile))
     end
     return startfile
   end
@@ -541,7 +553,7 @@ local function treeSetConnectorsAndIcons(tree)
 
     local startfile = tree:GetItemFullName(item_id):gsub(q(project), "")
     filetree.settings.startfile[project] = startfile
-    tree:SetItemImage(item_id, getIcon(tree:GetItemFullName(item_id)))
+    updateItemImage(item_id)
     return startfile
   end
 
@@ -825,6 +837,14 @@ local function treeSetConnectorsAndIcons(tree)
       end
     end)
 
+  if ide.wxver >= "3.1.3" then
+    -- provide workaround for white background in a focused item in the tree
+    -- on Linux when the tree itself is unfocused (may be gtk3-only issue);
+    -- enable on all platforms, as the brackground is low contrast on MacOS
+    -- and blue-colored on Windows
+    tree:Connect(wx.wxEVT_KILL_FOCUS, function(event) tree:ClearFocusedItem() end)
+  end
+
   local itemsrc
   tree:Connect(wx.wxEVT_COMMAND_TREE_BEGIN_DRAG,
     function (event)
@@ -994,14 +1014,18 @@ function FileTreeMarkSelected(file)
     end
     if item_id then
       if not projtree:IsVisible(item_id) then
-        if ide.osname ~= "Unix" then projtree:Freeze() end
         projtree:EnsureVisible(item_id)
         -- it's supposed to be enough to do EnsureVisible,
         -- but occasionally it's positioned one item too high (wxwidgets 3.1.1 on Win),
         -- so scroll to make sure the item really is visible
         projtree:ScrollTo(item_id)
         projtree:SetScrollPos(wx.wxHORIZONTAL, 0, true)
-        if ide.osname ~= "Unix" then projtree:Thaw() end
+        if ide.osname == "Windows" then
+          -- the following is a workaround for SetScrollPos not scrolling in wxwidgets 3.1.3
+          -- https://trac.wxwidgets.org/ticket/18543
+          projtree:Freeze()
+          projtree:Thaw()
+        end
       end
       projtree:SetItemBold(item_id, true)
       PackageEventHandle("onFiletreeFileMarkSelected", projtree, item_id, file, true)
@@ -1109,7 +1133,8 @@ local package = ide:AddPackage('core.filetree', {
 
     onEditorFocusSet = function(plugin, editor)
       -- need to delay the sync, as the document may not yet exist for the editor
-      ide:DoWhenIdle(function() if ide:IsValidCtrl(editor) then syncTree(editor) end end)
+      ide:DoWhenIdle(function() if ide:IsValidCtrl(editor) then syncTree(editor) end end,
+        "core.filetree.oneditorfocusset")
     end,
 
     onEditorClose = function(plugin, editor)

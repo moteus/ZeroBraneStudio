@@ -312,7 +312,9 @@ local function callTipFitAndShow(editor, pos, tip)
 
   local startpos = editor:PositionFromLine(sline)
   local afterwidth = editor:GetSize():GetWidth()-point:GetX()
-  if maxwidth > afterwidth then
+  -- only adjust the position if the line is not wrapped,
+  -- otherwise the popup may cover the cursor
+  if maxwidth > afterwidth and editor:WrapCount(sline) == 1 then
     local charwidth = editor:TextWidth(wxstc.wxSTC_STYLE_DEFAULT, 'A')
     pos = math.max(startpos, pos - math.floor((maxwidth - afterwidth) / charwidth))
   end
@@ -338,8 +340,10 @@ function EditorCallTip(editor, pos, x, y)
   if debugger and debugger:IsConnected() then
     if var then
       debugger:EvalAsync(var, function(val, err)
-        -- val == `nil` if there is any error
+        -- val is `nil` if there is any error
         val = val ~= nil and (var.." = "..val) or err
+        -- convert invalid UTF8 code, as could only appear in strings
+        val = FixUTF8(val, function(s) return '\\'..string.byte(s) end)
         if #val > limit then val = val:sub(1, limit-3).."..." end
         -- check if the mouse position is specified and the mouse has moved,
         -- then don't show the tooltip as it's already too late for it.
@@ -357,7 +361,7 @@ function EditorCallTip(editor, pos, x, y)
     -- only shorten if shown on mouse-over. Use shortcut to get full info.
     local showtooltip = ide.frame.menuBar:FindItem(ID.SHOWTOOLTIP)
     local suffix = "...\n"
-        ..TR("Use '%s' to see full description."):format(showtooltip:GetItemLabel())
+        ..TR("Use '%s' to see full description."):format(showtooltip:GetItemLabelText())
     if x and y and #tip > limit then
       tip = tip:sub(1, limit-#suffix):gsub("%W*%w*$","")..suffix
     end
@@ -669,6 +673,7 @@ end
 
 -- ----------------------------------------------------------------------------
 -- Create an editor
+local editorfont
 function CreateEditor(bare)
   local editor = ide:CreateStyledTextCtrl(notebook, editorID,
     wx.wxDefaultPosition, wx.wxSize(0, 0), wx.wxBORDER_NONE)
@@ -709,10 +714,12 @@ function CreateEditor(bare)
     end
   end
 
-  editor:SetBufferedDraw(not ide.config.hidpi and true or false)
   editor:StyleClearAll()
 
-  editor:SetFont(ide.font.editor)
+  editorfont = editorfont or ide:CreateFont(edcfg.fontsize or 10, wx.wxFONTFAMILY_MODERN,
+    wx.wxFONTSTYLE_NORMAL, wx.wxFONTWEIGHT_NORMAL, false, edcfg.fontname or "",
+    edcfg.fontencoding or wx.wxFONTENCODING_DEFAULT)
+  editor:SetFont(editorfont)
   editor:StyleSetFont(wxstc.wxSTC_STYLE_DEFAULT, editor:GetFont())
 
   editor:SetTabWidth(tonumber(edcfg.tabwidth) or 2)
@@ -754,15 +761,16 @@ function CreateEditor(bare)
 
   editor:SetVisiblePolicy(wxstc.wxSTC_VISIBLE_STRICT, 3)
 
+  local charwidth = editor:TextWidth(wxstc.wxSTC_STYLE_DEFAULT, "8")
   editor:SetMarginType(margin.LINENUMBER, wxstc.wxSTC_MARGIN_NUMBER)
   editor:SetMarginMask(margin.LINENUMBER, 0)
   editor:SetMarginWidth(margin.LINENUMBER,
-    edcfg.linenumber and math.floor(linenumlen * editor:TextWidth(wxstc.wxSTC_STYLE_DEFAULT, "8")) or 0)
+    edcfg.linenumber and math.floor(linenumlen * charwidth) or 0)
 
   editor:SetMarginType(margin.MARKER, wxstc.wxSTC_MARGIN_SYMBOL)
   editor:SetMarginMask(margin.MARKER, 0xffffffff - wxstc.wxSTC_MASK_FOLDERS)
   editor:SetMarginSensitive(margin.MARKER, true)
-  editor:SetMarginWidth(margin.MARKER, 18)
+  editor:SetMarginWidth(margin.MARKER, charwidth*1.8)
 
   editor:MarkerDefine(StylesGetMarker("currentline"))
   editor:MarkerDefine(StylesGetMarker("breakpoint"))
@@ -772,11 +780,15 @@ function CreateEditor(bare)
     editor:SetMarginType(margin.FOLD, wxstc.wxSTC_MARGIN_SYMBOL)
     editor:SetMarginMask(margin.FOLD, wxstc.wxSTC_MASK_FOLDERS)
     editor:SetMarginSensitive(margin.FOLD, true)
-    editor:SetMarginWidth(margin.FOLD, 18)
+    editor:SetMarginWidth(margin.FOLD, charwidth*1.8)
   end
 
   editor:SetFoldFlags(tonumber(edcfg.foldflags) or wxstc.wxSTC_FOLDFLAG_LINEAFTER_CONTRACTED)
   editor:SetBackSpaceUnIndents(edcfg.backspaceunindent and 1 or 0)
+
+  if ide.wxver >= "3.0" and edcfg.showligatures then
+    editor:SetTechnology(wxstc.wxSTC_TECHNOLOGY_DIRECTWRITE) -- Windows only
+  end
 
   if ide.wxver >= "2.9.5" then
     -- allow multiple selection and multi-cursor editing if supported
@@ -1250,17 +1262,23 @@ function CreateEditor(bare)
   -- brackets or backspace is used (very slow screen repaint with 0.5s delay).
   -- Moving it to PAINTED event creates problems on OSX (using wx2.9.5+),
   -- where refresh of R/W and R/O status in the status bar is delayed.
+  -- To avoid this macOS issue and a observed crash on Linux (wx3.1.2+) the
+  -- execution of the update is delayed till after the event is completed.
+  -- See https://github.com/pkulchenko/wxlua/issues/5 for the related discussion.
+  -- PAINTED is better than UPDATEUI, as it handles INS vs OVR and R/O vs R/W status.
+  -- The underlying issue has been addressed in https://trac.wxwidgets.org/ticket/18451
   editor:Connect(wxstc.wxEVT_STC_PAINTED,
     function (event)
       PackageEventHandle("onEditorPainted", editor, event)
 
-      if ide.osname == 'Windows' then
-        -- STC_PAINTED is called on multiple editors when they point to
-        -- the same document; only update status for the active one
-        if notebook:GetSelection() == notebook:GetPageIndex(editor) then
-          updateStatusText(editor)
-        end
+      -- STC_PAINTED is called on multiple editors when they point to
+      -- the same document; only update status for the active one
+      local doc = ide:GetDocument(editor)
+      if doc and doc:IsActive() then
+        editor:DoWhenIdle(function() updateStatusText(editor) end)
+      end
 
+      if ide.osname == 'Windows' then
         if edcfg.usewrap ~= true and editor:AutoCompActive() then
           -- showing auto-complete list leaves artifacts on the screen,
           -- which can only be fixed by a forced refresh.
@@ -1300,8 +1318,6 @@ function CreateEditor(bare)
 
       PackageEventHandle("onEditorUpdateUI", editor, event)
 
-      if ide.osname ~= 'Windows' then updateStatusText(editor) end
-
       editor:GotoPosDelayed()
       updateBraceMatch(editor)
       local minupdated
@@ -1314,12 +1330,16 @@ function CreateEditor(bare)
         local ok, res = pcall(indicateSymbols, editor, minupdated)
         if not ok then ide:Print("Internal error: ",res,minupdated) end
       end
-      local firstvisible = editor:GetFirstVisibleLine()
-      local firstline = editor:DocLineFromVisible(firstvisible)
-      local lastline = editor:DocLineFromVisible(firstvisible + editor:LinesOnScreen())
-      -- cap last line at the number of lines in the document
-      MarkupStyle(editor, minupdated or firstline, math.min(editor:GetLineCount(),lastline))
       editor.ev = {}
+      -- skip checking/updating markup when cursor position or selection changes,
+      -- as its drawing is not going to be affected by those operations
+      if event:GetUpdated() ~= wxstc.wxSTC_UPDATE_SELECTION then
+        local firstvisible = editor:GetFirstVisibleLine()
+        local firstline = editor:DocLineFromVisible(firstvisible)
+        local lastline = editor:DocLineFromVisible(firstvisible + editor:LinesOnScreen())
+        -- cap last line at the number of lines in the document
+        MarkupStyle(editor, minupdated or firstline, math.min(editor:GetLineCount(),lastline))
+      end
     end)
 
   editor:Connect(wx.wxEVT_IDLE,
@@ -1365,7 +1385,7 @@ function CreateEditor(bare)
   editor:Connect(wx.wxEVT_SET_FOCUS,
     function (event)
       event:Skip()
-      if inhandler or ide.exitingProgram then return end
+      if inhandler or ide:IsExiting() then return end
       inhandler = true
       PackageEventHandle("onEditorFocusSet", editor)
       isFileAlteredOnDisk(editor)
@@ -1788,9 +1808,17 @@ local function setLexLPegLexer(editor, spec)
   end
   spec.lexerstyleconvert = styleconvert
   -- assign line comment value based on the values in the lexer comment table
-  for k, v in pairs(lexmod._foldsymbols and lexmod._foldsymbols.comment or {}) do
-    if type(v) == 'function' then spec.linecomment = k end
+  if spec.linecomment == nil then
+    local comments = (lexmod._FOLDPOINTS and lexmod._FOLDPOINTS.comment) or
+        (lexmod._foldsymbols and lexmod._foldsymbols.comment) or {}
+    for k, v in pairs(comments) do
+      if type(v) == 'function' then
+          spec.linecomment = k
+          break
+        end
+    end
   end
+
   return true
 end
 
@@ -1798,7 +1826,7 @@ function SetupKeywords(editor, ext, forcespec, styles, font, fontitalic)
   local lexerstyleconvert = nil
   local spec = forcespec or ide:FindSpec(ext, editor:GetLine(0))
   -- found a spec setup lexers and keywords
-  if spec and ide:IsValidProperty(editor, 'spec') and editor.spec == spec then return end
+  if spec and ide:IsValidProperty(editor, 'spec') and editor.spec == spec and not forcespec then return end
   if spec then
     if type(spec.lexer) == "string" then
       local ok, err = setLexLPegLexer(editor, spec)

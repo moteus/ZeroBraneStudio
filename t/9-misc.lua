@@ -1,5 +1,5 @@
 local i18n = ide:GetFileList('cfg/i18n/', true, '*.lua')
-is(#i18n, 11, "Language files are present in i18n directory.")
+is(#i18n, 12, "Language files are present in i18n directory.")
 for _, ln in ipairs(i18n) do
   local func = loadfile(ln)
   ok(type(func) == 'function' and func() ~= nil, ("Loaded '%s' language file."):format(ln))
@@ -163,3 +163,16 @@ tree:SetStartFile()
 ok(tree:GetStartFile() == nil, "GetStartFile returns `nil` after unsetting start file.")
 
 is(ide:IsValidProperty({}, "nonexisting"), false, "`IsValidProperty` returns `false ` for non-existing properties.")
+
+-- create t/foo.lua with foo=1 value
+local configfile = MergeFullPath(wx.wxStandardPaths.Get():GetTempDir(), "config.lua")
+FileWrite(configfile, "foo=1")
+ide:AddConfig("test", configfile)
+FileRemove(configfile)
+-- confirm ide.config.foo == 1
+is(ide.config.foo, 1, "AddConfig sets specified config file.")
+ide:RemoveConfig("test")
+ok(ide.config.foo == nil, "RemoveConfig unsets specified config file.")
+
+-- check that ide.config.styles still has metatable
+ok(getmetatable(ide.config.styles) ~= nil, "Removing config file restores original styles.")
