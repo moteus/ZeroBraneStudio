@@ -398,6 +398,8 @@ local function treeSetConnectorsAndIcons(tree)
     -- close the target document, since the source has already been updated for it
     if targetdoc and #sourcedocs > 0 then targetdoc:Close() end
 
+    tree:Thaw()
+
     local itemdst = tree:FindItem(target)
     if itemdst then
       tree:UnselectAll()
@@ -407,8 +409,6 @@ local function treeSetConnectorsAndIcons(tree)
       if expanded then tree:Expand(itemdst) end
       tree:SetScrollPos(wx.wxVERTICAL, pos)
     end
-
-    tree:Thaw()
 
     PackageEventHandle("onFiletreeFileRename", tree, itemsrc, source, target)
 
@@ -575,6 +575,12 @@ local function treeSetConnectorsAndIcons(tree)
 
     saveSettings()
     return item_id
+  end
+
+  if ide.osname == "Unix" then
+    local gfi = tree.GetFocusedItem
+    tree.focusedItem = false
+    function tree:GetFocusedItem(...) return self.focusedItem or gfi(self, ...) end
   end
 
   tree:Connect(ID.NEWFILE, wx.wxEVT_COMMAND_MENU_SELECTED,
@@ -759,7 +765,15 @@ local function treeSetConnectorsAndIcons(tree)
       local interval = wx.wxUpdateUIEvent.GetUpdateInterval()
       wx.wxUpdateUIEvent.SetUpdateInterval(-1) -- don't update
 
+      if ide.osname == "Unix" then
+        -- Linux implementation is losing focus item state after the popup window is shown,
+        -- so save it to use if needed
+        tree.focusedItem = tree:GetFocusedItem()
+      end
+
       tree:PopupMenu(menu)
+
+      tree.focusedItem = false
       wx.wxUpdateUIEvent.SetUpdateInterval(interval)
       collectgarbage("restart")
     end)
