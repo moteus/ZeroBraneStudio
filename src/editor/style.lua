@@ -368,14 +368,26 @@ function StylesApplyToEditor(styles,editor,font,fontitalic,lexerconvert)
     fontitalic:SetStyle(wx.wxFONTSTYLE_ITALIC)
   end
 
+  local weight = ide:IsValidProperty(font, "GetNumericWeight") and font:GetNumericWeight()
+
   local function applystyle(style,id)
     editor:StyleSetFont(id, style.i and fontitalic or font)
     editor:StyleSetBold(id, style.b or false)
+    if weight and not style.b then editor:StyleSetWeight(id, weight) end
     editor:StyleSetUnderline(id, style.u or false)
     editor:StyleSetEOLFilled(id, style.fill or false)
 
     if style.fn then editor:StyleSetFaceName(id, style.fn) end
-    if style.fs then editor:StyleSetSize(id, style.fs) end
+    local fs = tonumber(style.fs)
+    if fs then
+      -- if the number has no fractional part
+      if fs % 1 == 0 then
+        editor:StyleSetSize(id, style.fs)
+      else
+        -- set fractional points; 9.4 => 940
+        editor:StyleSetSizeFractional(id, style.fs * 100)
+      end
+    end
     if style.v ~= nil then editor:StyleSetVisible(id, style.v) end
 
     if style.hs then
@@ -400,9 +412,9 @@ function StylesApplyToEditor(styles,editor,font,fontitalic,lexerconvert)
   editor:StyleResetDefault()
   editor:SetFont(font)
   if (styles.text) then
-    applystyle(styles.text,defaultmapping["text"])
+    applystyle(styles.text,defaultmapping.text)
   else
-    applystyle({},defaultmapping["text"])
+    applystyle({},defaultmapping.text)
   end
   editor:StyleClearAll()
 

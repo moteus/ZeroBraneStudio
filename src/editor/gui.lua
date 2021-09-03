@@ -24,7 +24,11 @@ local function createFrame()
       local mgr = ide:GetUIManager()
       local toolbar = mgr:GetPane("toolbar")
       if toolbar and toolbar:IsOk() then
-        toolbar:BestSize(event:GetSize():GetWidth(), ide:GetToolBar():GetClientSize():GetHeight())
+        local tbheight = ide:GetToolBar():GetClientSize():GetHeight()
+        -- some Linux desktop environments (ex LXQt) report wrong client size to wx, so skip those
+        if tbheight > 1 then
+          toolbar:BestSize(event:GetSize():GetWidth(), tbheight)
+        end
         mgr:Update()
       end
     end)
@@ -302,6 +306,10 @@ local function createNotebook(frame)
       if not startfile then menu:Destroy(ID.UNSETSTARTFILE) end
 
       PackageEventHandle("onMenuEditorTab", menu, notebook, event, notebook:GetPageIndex(selection))
+
+      if selection:GetClassInfo():GetClassName() == "wxStyledTextCtrl" then
+        selection = selection:DynamicCast("wxStyledTextCtrl")
+      end
 
       -- popup statuses are not refreshed on Linux, so do it manually
       if ide.osname == "Unix" then UpdateMenuUI(menu, notebook) end

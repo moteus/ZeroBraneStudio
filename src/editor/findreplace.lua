@@ -912,8 +912,8 @@ function findReplace:createPanel()
   self:createToolbar()
 
   local style, styledef = ide.config.styles, StylesGetDefault()
-  local textcolor = wx.wxColour(unpack(style.text.fg or styledef.text.fg))
-  local backcolor = wx.wxColour(unpack(style.text.bg or styledef.text.bg))
+  local textcolor = wx.wxColour(unpack(style.text and style.text.fg or styledef.text.fg))
+  local backcolor = wx.wxColour(unpack(style.text and style.text.bg or styledef.text.bg))
   local pancolor = tb:GetBackgroundColour()
   local borcolor = ide:GetUIManager():GetArtProvider():GetColour(wxaui.wxAUI_DOCKART_BORDER_COLOUR)
   local bpen = wx.wxPen(borcolor, 1, wx.wxSOLID)
@@ -1011,7 +1011,10 @@ function findReplace:createPanel()
 
   local function findIncremental(event)
     if not self.infiles and self.backfocus and self.backfocus.position then
-      self:GetEditor():SetSelection(self.backfocus.position, self.backfocus.position)
+      local editor = self:GetEditor()
+      if editor then
+        editor:SetSelection(self.backfocus.position, self.backfocus.position)
+      end
     end
     -- don't search when used with "infiles", but still trigger autocomplete
     if self.infiles or self:Find() then
