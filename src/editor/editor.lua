@@ -881,7 +881,16 @@ function CreateEditor(bare)
   function editor:BookmarkToggle(...) return self:MarkerToggle("bookmark", ...) end
   function editor:BreakpointToggle(...) return self:MarkerToggle("breakpoint", ...) end
 
-  function editor:DoWhenIdle(func) table.insert(self.onidle, func) end
+  --! @moteus@ - deduplicate idle actions
+  function editor:DoWhenIdle(func)
+    for i, fn in ipairs(self.onidle) do
+      if fn == func then
+        table.remove(self.onidle, i)
+        break
+      end
+    end
+    table.insert(self.onidle, func)
+  end
 
   -- GotoPos should work by itself, but it doesn't (wx 2.9.5).
   -- This is likely because the editor window hasn't been refreshed yet,
@@ -1130,7 +1139,8 @@ function CreateEditor(bare)
       elseif ide.config.autocomplete then -- code completion prompt
         local trigger = linetxtopos:match("["..editor.spec.sep.."%w_]+$")
         if trigger and (#trigger > 1 or trigger:match("["..editor.spec.sep.."]")) then
-          editor:DoWhenIdle(function(editor) EditorAutoComplete(editor) end)
+          --! @moteus@ - use `EditorAutoComplete` directly so it will be deduplicated
+          editor:DoWhenIdle(EditorAutoComplete)
         end
       end
     end)
@@ -1276,16 +1286,6 @@ function CreateEditor(bare)
       local doc = ide:GetDocument(editor)
       if doc and doc:IsActive() then
         editor:DoWhenIdle(function() updateStatusText(editor) end)
-      end
-
-      if ide.osname == 'Windows' then
-        if edcfg.usewrap ~= true and editor:AutoCompActive() then
-          -- showing auto-complete list leaves artifacts on the screen,
-          -- which can only be fixed by a forced refresh.
-          -- shows with wxSTC 3.21 and both wxwidgets 2.9.5 and 3.1
-          editor:Update()
-          editor:Refresh()
-        end
       end
 
       -- adjust line number margin, but only if it's already shown
@@ -1747,13 +1747,18 @@ local function setLexLPegLexer(editor, spec)
   if dynlexer then
     local ok, err = CreateFullPath(tmppath)
     if not ok then return nil, err end
-    -- update lex.LEXERPATH to search there
-    lex.LEXERPATH = MergeFullPath(tmppath, "?.lua")
     dynfile = MergeFullPath(tmppath, lexer..".lua")
     -- save the file to the temp folder
     ok, err = FileWrite(dynfile, dynlexer)
     if not ok then cleanup({tmppath}); return nil, err end
   end
+  -- set lexer.lpeg.home that is used in lpeg lexer since 2020-03 (60547a32 in scintillua)
+  if not lex.property then
+    -- provide an empty string for non-existing properties
+    lex.property = setmetatable({}, {__index = function() return '' end})
+  end
+  lex.property["lexer.lpeg.home"] = dynlexer and tmppath or lpath
+
   local ok, err = pcall(lex.load, lexer)
   if dynlexer then cleanup({dynfile, tmppath}) end
   if not ok then return nil, (err:gsub(".+lexer%.lua:%d+:%s*","")) end

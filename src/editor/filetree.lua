@@ -217,9 +217,7 @@ local function treeSetConnectorsAndIcons(tree)
       if cur and #cur > 0 then str = MergeFullPath(cur, str) end
     end
     -- as root may already include path separator, normalize the path
-    local fullPath = wx.wxFileName(str)
-    fullPath:Normalize()
-    return fullPath:GetFullPath()
+    return FileNormalizePath(str)
   end
 
   function tree:RefreshChildren(node)
@@ -316,7 +314,6 @@ local function treeSetConnectorsAndIcons(tree)
     local isdir = tree:IsDirectory(itemsrc)
     local isnew = tree:GetItemText(itemsrc) == empty
     local source = tree:GetItemFullName(itemsrc)
-    local fn = wx.wxFileName(target)
 
     -- check if the target is the same as the source;
     -- SameAs check is not used here as "Test" and "test" are the same
@@ -345,7 +342,7 @@ local function treeSetConnectorsAndIcons(tree)
     if overwrite and doc then doc:SetActive() end
     if overwrite and not ApproveFileOverwrite() then return false end
 
-    if not fn:Mkdir(tonumber("755",8), wx.wxPATH_MKDIR_FULL) then
+    if not wx.wxFileName(target):Mkdir(tonumber("755",8), wx.wxPATH_MKDIR_FULL) then
       ide:ReportError(TR("Unable to create directory '%s'."):format(target))
       return false
     end
@@ -378,12 +375,15 @@ local function treeSetConnectorsAndIcons(tree)
       or {ide:FindDocument(source)})
     local targetdoc = ide:FindDocument(target)
 
+    -- need to protect against `%` characters in target, as those can be interpteted
+    -- as a sequence number in replacement
+    local escapedtarget = target:gsub("%%", "%%%%")
     for _, doc in ipairs(sourcedocs) do
       local fullpath = doc:GetFilePath()
       -- when moving folders, /foo/bar/file.lua can be replaced with
       -- /foo/baz/bar/file.lua, so change /foo/bar to /foo/baz/bar
-      local path = (not iscaseinsensitive and fullpath:gsub(q(source), target)
-        or fullpath:lower():gsub(q(source:lower()), target))
+      local path = (not iscaseinsensitive and fullpath:gsub(q(source), escapedtarget)
+        or fullpath:lower():gsub(q(source:lower()), escapedtarget))
 
       doc:SetFilePath(path)
       doc:SetFileName(wx.wxFileName(path):GetFullName())

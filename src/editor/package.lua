@@ -424,7 +424,7 @@ function ide:SetProject(projdir,skiptree)
   -- strip trailing spaces as this may create issues with "path/ " on Windows
   projdir = projdir:gsub("%s+$","")
   local dir = wx.wxFileName.DirName(FixDir(projdir))
-  dir:Normalize() -- turn into absolute path if needed
+  dir:Normalize(wx.wxPATH_NORM_ABSOLUTE + wx.wxPATH_NORM_DOTS) -- turn into absolute path if needed
   if not wx.wxDirExists(dir:GetFullPath()) then return self.filetree:updateProjectDir(projdir) end
 
   projdir = dir:GetPath(wx.wxPATH_GET_VOLUME) -- no trailing slash
@@ -438,7 +438,7 @@ function ide:SetProject(projdir,skiptree)
 end
 function ide:GetProjectStartFile()
   local projectdir = self:GetProject()
-  local startfile = self.filetree.settings.startfile[projectdir]
+  local startfile = self:GetProjectTree():GetStartFile()
   return MergeFullPath(projectdir, startfile), startfile
 end
 function ide:GetLaunchedProcess() return self.debugger and self.debugger.pid end
@@ -745,6 +745,10 @@ function ide:CreateStyledTextCtrl(...)
   end
 
   function editor:ClearAny()
+    -- don't delete anything if there is nothing to delete, as this logic
+    -- may be incorrect with empty rectangular selection that has
+    -- different selection start and end markers despite being empty
+    if self:GetSelectionEmpty() then return end
     local length = self:GetLength()
     local selections = ide.wxver >= "2.9.5" and self:GetSelections() or 1
     self:Clear() -- remove selected fragments
@@ -890,13 +894,36 @@ function ide:CreateTreeCtrl(...)
   return ctrl
 end
 
+local fontWeights = {
+  thin = wx.wxFONTWEIGHT_THIN,
+  extralight = wx.wxFONTWEIGHT_EXTRALIGHT,
+  light = wx.wxFONTWEIGHT_LIGHT,
+  normal = wx.wxFONTWEIGHT_NORMAL,
+  medium = wx.wxFONTWEIGHT_MEDIUM,
+  semibold = wx.wxFONTWEIGHT_SEMIBOLD,
+  bold = wx.wxFONTWEIGHT_BOLD,
+  extrabold = wx.wxFONTWEIGHT_EXTRABOLD,
+  heavy = wx.wxFONTWEIGHT_HEAVY,
+  extraheavy = wx.wxFONTWEIGHT_EXTRAHEAVY,
+}
+
 function ide:CreateFont(size, family, style, weight, underline, name, encoding)
   local font = wx.wxFont(size, family, style, weight, underline, "", encoding)
   if name > "" then
     -- assign the face name separately to detect when it fails to load the font
     font:SetFaceName(name)
     if ide:IsValidProperty(font, "IsOk") and not font:IsOk() then
+      local name, weightName = name:match("(.+)%s+(%w+)$")
+      local weight = weightName and fontWeights[weightName:lower()]
+      if weight and ide:IsValidProperty(font, "SetNumericWeight") then
+        font = wx.wxFont(size, family, style, weight, underline, "", encoding)
+        font:SetFaceName(name)
+        font:SetNumericWeight(weight)
+      end
+    end
+    if ide:IsValidProperty(font, "IsOk") and not font:IsOk() then
       -- assign default font from the same family if the exact font is not loaded
+      ide:Print(("Warning: could not load requested font '%s'; loaded replacement font instead."):format(name))
       font = wx.wxFont(size, family, style, weight, underline, "", encoding)
     end
   end
@@ -1589,7 +1616,7 @@ function ide:IsProjectSubDirectory(dir)
   -- normalize and check if directory when cut is the same as the project directory;
   -- this relies on the project directory ending in a path separator.
   local path = wx.wxFileName(dir:sub(1, #projdir))
-  path:Normalize()
+  path:Normalize(wx.wxPATH_NORM_ABSOLUTE + wx.wxPATH_NORM_DOTS)
   return path:SameAs(wx.wxFileName(projdir))
 end
 
