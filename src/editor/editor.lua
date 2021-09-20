@@ -881,7 +881,16 @@ function CreateEditor(bare)
   function editor:BookmarkToggle(...) return self:MarkerToggle("bookmark", ...) end
   function editor:BreakpointToggle(...) return self:MarkerToggle("breakpoint", ...) end
 
-  function editor:DoWhenIdle(func) table.insert(self.onidle, func) end
+  --! @moteus@ - deduplicate idle actions
+  function editor:DoWhenIdle(func)
+    for i, fn in ipairs(self.onidle) do
+      if fn == func then
+        table.remove(self.onidle, i)
+        break
+      end
+    end
+    table.insert(self.onidle, func)
+  end
 
   -- GotoPos should work by itself, but it doesn't (wx 2.9.5).
   -- This is likely because the editor window hasn't been refreshed yet,
@@ -1130,7 +1139,8 @@ function CreateEditor(bare)
       elseif ide.config.autocomplete then -- code completion prompt
         local trigger = linetxtopos:match("["..editor.spec.sep.."%w_]+$")
         if trigger and (#trigger > 1 or trigger:match("["..editor.spec.sep.."]")) then
-          editor:DoWhenIdle(function(editor) EditorAutoComplete(editor) end)
+          --! @moteus@ - use `EditorAutoComplete` directly so it will be deduplicated
+          editor:DoWhenIdle(EditorAutoComplete)
         end
       end
     end)
