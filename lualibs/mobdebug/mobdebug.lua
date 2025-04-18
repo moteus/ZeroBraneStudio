@@ -1,6 +1,6 @@
 --
 -- MobDebug -- Lua remote debugger
--- Copyright 2011-20 Paul Kulchenko
+-- Copyright 2011-23 Paul Kulchenko
 -- Based on RemDebug 1.0 Copyright Kepler Project 2005
 --
 
@@ -19,7 +19,7 @@ end)("os")
 
 local mobdebug = {
   _NAME = "mobdebug",
-  _VERSION = "0.801",
+  _VERSION = "0.805",
   _COPYRIGHT = "Paul Kulchenko",
   _DESCRIPTION = "Mobile Remote Debugger for the Lua programming language",
   port = os and os.getenv and tonumber((os.getenv("MOBDEBUG_PORT"))) or 8172,
@@ -55,7 +55,14 @@ local MOAICoroutine = rawget(genv, "MOAICoroutine")
 -- methods use a different mechanism that doesn't allow resume calls
 -- from debug hook handlers.
 -- Instead, the "original" coroutine.* methods are used.
+-- `rawget` needs to be used to protect against `strict` checks
 local ngx = rawget(genv, "ngx")
+if not ngx then
+  -- "older" versions of ngx_lua (0.10.x at least) hide ngx table in metatable,
+  -- so need to use that
+  local metagindex = getmetatable(genv) and getmetatable(genv).__index
+  ngx = type(metagindex) == "table" and metagindex.rawget and metagindex:rawget("ngx") or nil
+end
 local corocreate = ngx and coroutine._create or coroutine.create
 local cororesume = ngx and coroutine._resume or coroutine.resume
 local coroyield = ngx and coroutine._yield or coroutine.yield
@@ -66,6 +73,7 @@ if not setfenv then -- Lua 5.2+
   -- based on http://lua-users.org/lists/lua-l/2010-06/msg00314.html
   -- this assumes f is a function
   local function findenv(f)
+    if not debug.getupvalue then return nil end
     local level = 1
     repeat
       local name, value = debug.getupvalue(f, level)
@@ -113,6 +121,7 @@ local step_into = false
 local step_over = false
 local step_level = 0
 local stack_level = 0
+local SAFEWS = "\012" -- "safe" whitespace value
 local server
 local buf
 local outputs = {}
@@ -310,7 +319,7 @@ local function stack(start)
     -- get upvalues
     i = 1
     local ups = {}
-    while func do -- check for func as it may be nil for tail calls
+    while func and debug.getupvalue do -- check for func as it may be nil for tail calls
       local name, value = debug.getupvalue(func, i)
       if not name then break end
       ups[name] = {value, select(2,pcall(tostring,value))}
@@ -390,7 +399,7 @@ local function restore_vars(vars)
 
   i = 1
   local func = debug.getinfo(3, "f").func
-  while true do
+  while debug.getupvalue do
     local name = debug.getupvalue(func, i)
     if not name then break end
     if not written_vars[name] then
@@ -410,7 +419,7 @@ local function capture_vars(level, thread)
 
   local vars = {['...'] = {}}
   local i = 1
-  while true do
+  while debug.getupvalue do
     local name, value = debug.getupvalue(func, i)
     if not name then break end
     if string.sub(name, 1, 1) ~= '(' then vars[name] = value end
@@ -724,9 +733,9 @@ local function stringify_results(params, status, ...)
   if params.nocode == nil then params.nocode = true end
   if params.comment == nil then params.comment = 1 end
 
-  local t = {...}
-  for i,v in pairs(t) do -- stringify each of the returned values
-    local ok, res = pcall(mobdebug.line, v, params)
+  local t = {}
+  for i = 1, select('#', ...) do -- stringify each of the returned values
+    local ok, res = pcall(mobdebug.line, select(i, ...), params)
     t[i] = ok and res or ("%q"):format(res):gsub("\010","n"):gsub("\026","\\026")
   end
   -- stringify table with all returned values
@@ -809,6 +818,8 @@ local function debugger_loop(sev, svars, sfile, sline)
       local params = string.match(line, "--%s*(%b{})%s*$")
       local _, _, chunk = string.find(line, "^[A-Z]+%s+(.+)$")
       if chunk then
+        -- \r is optional, as it may be stripped by some luasocket versions, like the one in LOVE2d
+        chunk = chunk:gsub("\r?"..SAFEWS, "\n") -- convert safe whitespace back to new line
         local func, res = mobdebug.loadstring(chunk)
         local status
         if func then
@@ -1351,7 +1362,7 @@ local function handle(params, client, options)
     local _, _, exp = string.find(params, "^[a-z]+%s+(.+)$")
     if exp or (command == "reload") then
       if command == "eval" or command == "exec" then
-        exp = exp:gsub("\n", "\r") -- convert new lines, so the fragment can be passed as one line
+        exp = exp:gsub("\r?\n", "\r"..SAFEWS) -- convert new lines, so the fragment can be passed as one line
         if command == "eval" then exp = "return " .. exp end
         client:send("EXEC " .. exp .. "\n")
       elseif command == "reload" then

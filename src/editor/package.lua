@@ -212,6 +212,7 @@ function ide:SetDebugger(deb)
   return deb
 end
 function ide:GetContentScaleFactor()
+  if self.osname == "Macintosh" and self.wxver >= "3.2.0" then return 1 end
   if not self:IsValidProperty(self.frame, "GetContentScaleFactor") then return 1 end
   local scale = self.frame:GetContentScaleFactor()
   if scale == -1 then return 1 end -- special value indicating "no information"
@@ -908,6 +909,8 @@ local fontWeights = {
 }
 
 function ide:CreateFont(size, family, style, weight, underline, name, encoding)
+  -- check if size is a valid number to avoid complaints from wxFont
+  size = tonumber(size) or 11
   local font = wx.wxFont(size, family, style, weight, underline, "", encoding)
   if name > "" then
     -- assign the face name separately to detect when it fails to load the font
@@ -1123,12 +1126,10 @@ function ide:CreateFileIcon(ext)
   local iconmap = ide.config.filetree.iconmap
   local mac = ide.osname == "Macintosh"
   local color = type(iconmap)=="table" and type(iconmap[ext])=="table" and iconmap[ext].fg
-  local scale = ide:GetContentScaleFactor()
-  local size = 16
-  local bitmap = ide:GetBitmap("FILE-NORMAL-CLR", "PROJECT", wx.wxSize(size*scale,size*scale))
   -- macOS does its own scaling for drawing on DC surface, so set to no scaling
-  if mac then scale = 1 end
-  bitmap = wx.wxBitmap(bitmap:GetSubBitmap(wx.wxRect(0, 0, size*scale, size*scale)))
+  local scale = mac and 1 or ide:GetContentScaleFactor()
+  local size = 16
+  local bitmap = wx.wxBitmap(size*scale, size*scale)
   iconfont = iconfont or ide:CreateFont(mac and 6 or 5,
     wx.wxFONTFAMILY_MODERN, wx.wxFONTSTYLE_NORMAL, wx.wxFONTWEIGHT_NORMAL, false,
     ide.config.filetree.iconfontname or ide.config.editor.fontname or "", wx.wxFONTENCODING_DEFAULT)
@@ -1136,6 +1137,10 @@ function ide:CreateFileIcon(ext)
   mdc:SelectObject(bitmap)
   mdc:SetFont(iconfont)
   mdc:SetTextForeground(wx.wxColour(0, 0, 32)) -- used fixed neutral color for text
+
+  mdc:SetBackgroundMode(wx.wxBRUSHSTYLE_TRANSPARENT)
+  mdc:SetPen(wx.wxPen(wx.wxColour(146, 164, 196), 1, wx.wxSOLID))
+  mdc:DrawRectangle(0, 1, size*scale, size*scale-2)
   -- take first three letters of the extension
   local text = ext:sub(1,3)
   local topstripe = 3*scale
@@ -1150,7 +1155,7 @@ function ide:CreateFileIcon(ext)
   end
   mdc:SetFont(wx.wxNullFont)
   mdc:SelectObject(wx.wxNullBitmap)
-  bitmap:SetMask(wx.wxMask(bitmap, wx.wxBLACK)) -- set transparent background
+  bitmap:SetMask(wx.wxMask(bitmap, wx.wxBLACK)) -- set the rest as transparent background
   return bitmap
 end
 
@@ -1499,6 +1504,16 @@ function ide:AddTimer(ctrl, callback)
   table.insert(timers, callback or function() end)
   ctrl:Connect(wx.wxEVT_TIMER, evhandler)
   return wx.wxTimer(ctrl, #timers)
+end
+
+function ide:RerouteMenuCommand(obj, id)
+  -- check if the conflicting shortcut is enabled:
+  -- (1) SetEnabled wasn't called or (2) Enabled was set to `true`.
+  local uievent = wx.wxUpdateUIEvent(id)
+  obj:ProcessEvent(uievent)
+  if not uievent:GetSetEnabled() or uievent:GetEnabled() then
+    obj:AddPendingEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, id))
+  end
 end
 
 local function setAcceleratorTable(accelerators)

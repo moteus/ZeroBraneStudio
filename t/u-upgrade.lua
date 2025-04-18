@@ -17,16 +17,17 @@ local function waitToComplete(bid)
 end
 
 local modules = {
-  ["require([[lfs]])._VERSION"] = "LuaFileSystem 1.6.3",
+  ["require([[lfs]])._VERSION"] = "LuaFileSystem 1.8.0",
   ["require([[lpeg]]).version()"] = "1.0.0",
   ["require([[ssl]])._VERSION"] = "0.9",
+  ["require([[socket]])._VERSION"] = "LuaSocket 3.0.0",
 }
-local envall = {'LUA_CPATH', 'LUA_CPATH_5_2', 'LUA_CPATH_5_3'}
+local envall = {'LUA_CPATH', 'LUA_CPATH_5_2', 'LUA_CPATH_5_3', 'LUA_CPATH_5_4'}
 local envs = {}
 -- save and unset all LUA_CPATH* environmental variables, as we'll only be setting LUA_CPATH
 -- for simplicity, so LUA_CPATH_5_2 and _5_3 need to be cleared as they take precedence
 for _, env in ipairs(envall) do envs[env] = os.getenv(env); wx.wxUnsetEnv(env) end
-for _, luaver in ipairs({"", "5.2", "5.3"}) do
+for _, luaver in ipairs({"", "5.2", "5.3", "5.4"}) do
   local clibs = ide.osclibs:gsub("clibs", "clibs"..luaver:gsub("%.",""))
   wx.wxSetEnv('LUA_CPATH', clibs)
 
@@ -37,7 +38,7 @@ for _, luaver in ipairs({"", "5.2", "5.3"}) do
     if pid then waitToComplete(pid) end
     -- when there is an error, show the error instead of the expected value
     is((pid and res or err):gsub("%s+$",""), modver,
-      ("Checking module version (%s) with Lua%s."):format(mod:match("%[%[(%w+)%]%]"), luaver))
+      ("Checking module version (%s) with Lua %s."):format(mod:match("%[%[(%w+)%]%]"), luaver))
   end
 end
 for env, val in pairs(envs) do

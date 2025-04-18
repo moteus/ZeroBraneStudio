@@ -662,16 +662,6 @@ local remap = {
   [ID.DELETEFILE]  = ide:GetProjectTree(),
 }
 
-local function rerouteMenuCommand(obj, id)
-  -- check if the conflicting shortcut is enabled:
-  -- (1) SetEnabled wasn't called or (2) Enabled was set to `true`.
-  local uievent = wx.wxUpdateUIEvent(id)
-  obj:ProcessEvent(uievent)
-  if not uievent:GetSetEnabled() or uievent:GetEnabled() then
-    obj:AddPendingEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, id))
-  end
-end
-
 local function remapkey(event)
   local keycode = event:GetKeyCode()
   local mod = event:GetModifiers()
@@ -680,7 +670,7 @@ local function remapkey(event)
     if focus and focus:GetId() == obj:GetId() then
       local ae = wx.wxAcceleratorEntry(); ae:FromString(KSC(id))
       if ae:GetFlags() == mod and ae:GetKeyCode() == keycode then
-        rerouteMenuCommand(obj, id)
+        ide:RerouteMenuCommand(obj, id)
         return
       end
     end
@@ -706,7 +696,7 @@ local function resolveConflict(localid, globalid)
         end
       end
     end
-    rerouteMenuCommand(ide.frame, globalid)
+    ide:RerouteMenuCommand(ide.frame, globalid)
   end
 end
 
@@ -731,7 +721,7 @@ for _, id in ipairs({ ID.GOTODEFINITION, ID.RENAMEALLINSTANCES,
     local fakeid = NewID()
     ide.frame:Connect(fakeid, wx.wxEVT_COMMAND_MENU_SELECTED, function()
         local editor = ide:GetEditorWithFocus(ide:GetEditor())
-        if editor then rerouteMenuCommand(editor, id) end
+        if editor then ide:RerouteMenuCommand(editor, id) end
       end)
     ide:SetAccelerator(fakeid, ksc)
   end
@@ -840,6 +830,11 @@ if ide.osname == 'Unix' then
             wx.wxGetKeyState(wx.WXK_SHIFT) and ID.NOTEBOOKTABPREV or ID.NOTEBOOKTABNEXT
         ))
       else
+        -- cancel calltip if it's shown, as it's sometimes left on when the app is switched from
+        if wx.wxGetKeyState(wx.WXK_ALT) or wx.wxGetKeyState(wx.WXK_CONTROL) then
+          local ed = ide:GetEditor()
+          if ed and ed:CallTipActive() then ed:CallTipCancel() end
+        end
         event:Skip()
       end
     end)

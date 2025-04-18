@@ -114,7 +114,7 @@ local function treeAddDir(tree,parent_id,rootdir)
 
   -- cache the mapping from names to tree items
   if ide.wxver >= "2.9.5" then
-    local data = wx.wxLuaTreeItemData()
+    local data = tree:GetItemData(parent_id) or wx.wxLuaTreeItemData()
     data:SetData(cache)
     tree:SetItemData(parent_id, data)
   end
@@ -314,6 +314,7 @@ local function treeSetConnectorsAndIcons(tree)
     local isdir = tree:IsDirectory(itemsrc)
     local isnew = tree:GetItemText(itemsrc) == empty
     local source = tree:GetItemFullName(itemsrc)
+    local fn = wx.wxFileName(target)
 
     -- check if the target is the same as the source;
     -- SameAs check is not used here as "Test" and "test" are the same
@@ -339,10 +340,15 @@ local function treeSetConnectorsAndIcons(tree)
     local overwrite = ((wx.wxFileExists(target) or wx.wxDirExists(target))
       and not wx.wxFileName(source):SameAs(fn))
     local doc = ide:FindDocument(target)
-    if overwrite and doc then doc:SetActive() end
-    if overwrite and not ApproveFileOverwrite() then return false end
-
-    if not wx.wxFileName(target):Mkdir(tonumber("755",8), wx.wxPATH_MKDIR_FULL) then
+    if overwrite then
+      if doc then doc:SetActive() end
+      if isdir then
+        ide:ReportError(TR("Can't overwrite existing directory '%s'."):format(target))
+        return false
+      end
+      if not ApproveFileOverwrite() then return false end
+    end
+    if not fn:Mkdir(tonumber("755",8), wx.wxPATH_MKDIR_FULL) then
       ide:ReportError(TR("Unable to create directory '%s'."):format(target))
       return false
     end

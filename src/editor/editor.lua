@@ -335,6 +335,17 @@ function EditorCallTip(editor, pos, x, y)
   -- if this is a value type rather than a function/method call, then use
   -- full match to avoid calltip about coroutine.status for "status" vars
   local tip = GetTipInfo(editor, funccall or var, false, not funccall)
+
+  -- if the cursor position didn't return anything, then try the mouse position
+  if not tip and not (x and y) then
+    local cpos = editor:ScreenToClient(wx.wxGetMousePosition())
+    local position = editor:PositionFromPointClose(cpos.x, cpos.y)
+    local var, funccall = editor:ValueFromPosition(position)
+    tip = GetTipInfo(editor, funccall or var, false, not funccall)
+    -- show tooltip at the mouse position instead of the cursor one
+    if tip then pos = position end
+  end
+
   local limit = ide.config.acandtip.maxlength
   local debugger = ide:GetDebugger()
   if debugger and debugger:IsConnected() then
@@ -361,7 +372,8 @@ function EditorCallTip(editor, pos, x, y)
     -- only shorten if shown on mouse-over. Use shortcut to get full info.
     local showtooltip = ide.frame.menuBar:FindItem(ID.SHOWTOOLTIP)
     local suffix = "...\n"
-        ..TR("Use '%s' to see full description."):format(showtooltip:GetItemLabelText())
+        ..TR("Use '%s' to see full description."):format(
+          showtooltip:GetItemLabelText().." ("..TSC(ID.SHOWTOOLTIP)..")")
     if x and y and #tip > limit then
       tip = tip:sub(1, limit-#suffix):gsub("%W*%w*$","")..suffix
     end
